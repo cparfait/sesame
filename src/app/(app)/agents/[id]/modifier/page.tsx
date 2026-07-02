@@ -44,6 +44,7 @@ export default async function AgentEditPage({
     fonction: agent.fonction,
     site: agent.site,
     responsable: agent.responsable,
+    teletravail: agent.teletravail,
     adLogin: agent.adLogin,
     dateArrivee: agent.dateArrivee?.toISOString().slice(0, 10) ?? null,
     dateFinContrat: agent.dateFinContrat?.toISOString().slice(0, 10) ?? null,

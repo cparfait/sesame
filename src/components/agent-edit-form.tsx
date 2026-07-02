@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { Trash2 } from "lucide-react";
 import { addAccess, removeAccess, updateAgent } from "@/lib/actions/agents";
-import { CIVILITES, STATUTS_EMPLOI } from "@/lib/constants";
+import { CIVILITES, STATUTS_EMPLOI, TELETRAVAIL_OPTIONS } from "@/lib/constants";
 import { Alert, Card, Field, Input, Select, Textarea } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 
@@ -21,6 +21,7 @@ export type AgentEditDto = {
   fonction: string | null;
   site: string | null;
   responsable: string | null;
+  teletravail: string | null;
   adLogin: string | null;
   dateArrivee: string | null;
   dateFinContrat: string | null;
@@ -96,6 +97,14 @@ export function AgentEditForm({ agent }: { agent: AgentEditDto }) {
               type="date"
               defaultValue={agent.dateFinContrat ?? ""}
             />
+          </Field>
+          <Field label="Télétravail">
+            <Select name="teletravail" defaultValue={agent.teletravail ?? ""}>
+              <option value="">Pas de télétravail</option>
+              {TELETRAVAIL_OPTIONS.map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </Select>
           </Field>
         </div>
         <div className="mt-4">

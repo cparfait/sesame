@@ -59,6 +59,7 @@ model Agent {
   dateDepart    DateTime?
   dateFinContrat DateTime?
   statut        AgentStatut @default(ACTIF)
+  teletravail   String? // ex. « 2 jours / semaine »
   adLogin       String? // rapprochement avec le compte AD (sAMAccountName)
   commentaire   String?
   createdAt     DateTime    @default(now())
@@ -77,6 +78,8 @@ model Application {
   referent    String? // référent fonctionnel ou technique
   profils     String? // profils possibles, séparés par des virgules
   actif       Boolean  @default(true)
+  source      String   @default("local") // local | sentinelle
+  externalId  String?  @unique // id de l'Asset côté Sentinelle
   createdAt   DateTime @default(now())
 
   accesses AgentAccess[]
@@ -122,15 +125,32 @@ enum RequestStatut {
   ANNULEE
 }
 
+model Workflow {
+  id           String      @id @default(cuid())
+  nom          String // ex. « Circuit DRH », « Circuit services techniques »
+  type         RequestType
+  actif        Boolean     @default(true)
+  isDefault    Boolean     @default(false) // circuit retenu quand aucun critère ne correspond
+  matchService String? // s'applique si le service de la demande correspond
+  matchAdGroup String? // s'applique si le demandeur appartient à ce groupe AD
+  priorite     Int         @default(0) // plus élevé = examiné en premier
+  createdAt    DateTime    @default(now())
+
+  steps    WorkflowStep[]
+  requests Request[]
+}
+
 model WorkflowStep {
-  id               String      @id @default(cuid())
-  type             RequestType
+  id               String @id @default(cuid())
+  workflowId       String
   ordre            Int
   nom              String // ex. « Validation chef de service »
   validatorRole    Role? // tout utilisateur ayant ce rôle peut valider
   validatorUserIds String? // ou liste d'ids utilisateurs, séparés par des virgules
 
-  @@unique([type, ordre])
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, ordre])
 }
 
 model Request {
@@ -140,6 +160,7 @@ model Request {
   statut          RequestStatut @default(EN_VALIDATION)
   requesterId     String
   agentId         String? // agent concerné (modification / départ)
+  workflowId      String? // circuit retenu à la création de la demande
   payload         Json // fiche complète de la demande
   currentStepOrdre Int          @default(1)
   createdAt       DateTime      @default(now())
@@ -148,6 +169,7 @@ model Request {
 
   requester   User                @relation("requester", fields: [requesterId], references: [id])
   agent       Agent?              @relation(fields: [agentId], references: [id])
+  workflow    Workflow?           @relation(fields: [workflowId], references: [id], onDelete: SetNull)
   validations RequestValidation[]
   tasks       ProvisionTask[]
 

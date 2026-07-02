@@ -11,7 +11,7 @@ export default async function AnnuairePage({
 }: {
   searchParams: Promise<{ q?: string; filtre?: string }>;
 }) {
-  const user = await requireUser();
+  const user = await requireUser("VALIDATEUR", "TECHNICIEN", "LECTEUR");
   const params = await searchParams;
   const q = params.q?.trim() ?? "";
   const filtre = params.filtre ?? "";

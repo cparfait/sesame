@@ -29,8 +29,10 @@ export default async function DemandesPage({
     ? (params.type as RequestType)
     : undefined;
 
+  // un demandeur ne voit que ses propres demandes
+  const isDemandeur = user.role === "DEMANDEUR";
   const demandes = await prisma.request.findMany({
-    where: { statut, type },
+    where: { statut, type, ...(isDemandeur && { requesterId: user.id }) },
     orderBy: { numero: "desc" },
     take: 200,
     include: { requester: true, tasks: true },
@@ -53,7 +55,7 @@ export default async function DemandesPage({
   return (
     <>
       <PageHeader
-        title="Demandes"
+        title={isDemandeur ? "Mes demandes" : "Demandes"}
         subtitle="Créations, modifications et départs — suivis de bout en bout"
       >
         {user.role !== "LECTEUR" && (

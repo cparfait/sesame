@@ -31,6 +31,7 @@ export async function updateAgent(
       fonction: s("fonction"),
       site: s("site"),
       responsable: s("responsable"),
+      teletravail: s("teletravail"),
       adLogin: s("adLogin"),
       dateArrivee: s("dateArrivee") ? new Date(s("dateArrivee")!) : null,
       dateFinContrat: s("dateFinContrat") ? new Date(s("dateFinContrat")!) : null,

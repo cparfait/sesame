@@ -10,11 +10,14 @@ import { ldapFetchAccounts, ldapTest } from "../ldap";
 import { mailLayout, sendMail } from "../mail";
 import {
   getLdapSettings,
+  getSentinelleSettings,
   setSetting,
   type GeneralSettings,
   type LdapSettings,
+  type SentinelleSettings,
   type SmtpSettings,
 } from "../settings";
+import { fetchSentinelleApplications } from "../sentinelle";
 import type { FormState } from "./auth";
 
 function str(formData: FormData, key: string): string {
@@ -156,7 +159,92 @@ export async function saveGeneral(_prev: FormState, formData: FormData): Promise
   return { success: "Paramètres enregistrés." };
 }
 
-// ── Workflows ──────────────────────────────────────────────────────────────
+// ── Sentinelle (catalogue d'applications) ──────────────────────────────────
+
+export async function saveSentinelle(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireUser("ADMIN");
+  const current = await getSentinelleSettings();
+  const token = str(formData, "token");
+  const cfg: SentinelleSettings = {
+    url: str(formData, "url").replace(/\/$/, ""),
+    token: token || current?.token,
+  };
+  if (!cfg.url) return { error: "L'URL de Sentinelle est obligatoire." };
+  await setSetting("sentinelle", cfg);
+  await audit("PARAM_SENTINELLE_MODIFIE", { userId: user.id });
+  revalidatePath("/parametres/sentinelle");
+  return { success: "Paramètres Sentinelle enregistrés." };
+}
+
+export async function syncSentinelle(
+  _prev: FormState,
+  _formData: FormData,
+): Promise<FormState> {
+  const user = await requireUser("ADMIN", "TECHNICIEN");
+  const cfg = await getSentinelleSettings();
+  if (!cfg?.url) return { error: "Configurez d'abord l'URL de Sentinelle." };
+  let apps;
+  try {
+    apps = await fetchSentinelleApplications(cfg);
+  } catch (e) {
+    return {
+      error: `Connexion à Sentinelle impossible : ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+  let created = 0;
+  let updated = 0;
+  for (const app of apps) {
+    const existing =
+      (await prisma.application.findUnique({ where: { externalId: app.externalId } })) ??
+      (await prisma.application.findUnique({ where: { nom: app.nom } }));
+    if (existing) {
+      await prisma.application.update({
+        where: { id: existing.id },
+        data: {
+          nom: app.nom,
+          description: app.description ?? existing.description,
+          actif: app.actif,
+          source: "sentinelle",
+          externalId: app.externalId,
+        },
+      });
+      updated++;
+    } else {
+      await prisma.application.create({
+        data: {
+          nom: app.nom,
+          description: app.description,
+          actif: app.actif,
+          source: "sentinelle",
+          externalId: app.externalId,
+        },
+      });
+      created++;
+    }
+  }
+  // applications Sentinelle disparues du catalogue → désactivées (jamais supprimées)
+  const disparues = await prisma.application.updateMany({
+    where: {
+      source: "sentinelle",
+      actif: true,
+      externalId: { notIn: apps.map((a) => a.externalId) },
+    },
+    data: { actif: false },
+  });
+  await audit("SENTINELLE_SYNCHRONISE", {
+    userId: user.id,
+    details: `${apps.length} applications (${created} créées, ${updated} mises à jour, ${disparues.count} désactivées)`,
+  });
+  revalidatePath("/applications");
+  return {
+    success: `Synchronisation terminée : ${apps.length} applications Sentinelle (${created} créées, ${updated} mises à jour, ${disparues.count} désactivées).`,
+  };
+}
+
+// ── Circuits de validation ─────────────────────────────────────────────────
 
 export type StepInput = {
   nom: string;
@@ -164,11 +252,24 @@ export type StepInput = {
   validatorUserIds?: string;
 };
 
-export async function saveWorkflow(
-  type: RequestType,
+export type WorkflowMetaInput = {
+  id?: string;
+  nom: string;
+  type: RequestType;
+  actif: boolean;
+  isDefault: boolean;
+  matchService?: string;
+  matchAdGroup?: string;
+  priorite: number;
+};
+
+/** Crée ou met à jour un circuit (métadonnées + étapes) et retourne son id. */
+export async function saveWorkflowDef(
+  meta: WorkflowMetaInput,
   steps: StepInput[],
-): Promise<FormState> {
+): Promise<FormState & { id?: string }> {
   const user = await requireUser("ADMIN");
+  if (!meta.nom.trim()) return { error: "Donnez un nom au circuit." };
   const clean = steps
     .map((s) => ({
       nom: s.nom.trim(),
@@ -176,16 +277,42 @@ export async function saveWorkflow(
       validatorUserIds: s.validatorUserIds?.trim() || undefined,
     }))
     .filter((s) => s.nom);
+  if (clean.length === 0) {
+    return { error: "Un circuit doit comporter au moins une étape." };
+  }
   for (const s of clean) {
     if (!s.validatorRole && !s.validatorUserIds) {
       return { error: `Étape « ${s.nom} » : choisissez un rôle valideur ou des valideurs nommés.` };
     }
   }
+
+  const data = {
+    nom: meta.nom.trim(),
+    type: meta.type,
+    actif: meta.actif,
+    isDefault: meta.isDefault,
+    matchService: meta.matchService?.trim() || null,
+    matchAdGroup: meta.matchAdGroup?.trim() || null,
+    priorite: Number.isFinite(meta.priorite) ? meta.priorite : 0,
+  };
+
+  const workflow = meta.id
+    ? await prisma.workflow.update({ where: { id: meta.id }, data })
+    : await prisma.workflow.create({ data });
+
+  // un seul circuit par défaut par type
+  if (data.isDefault) {
+    await prisma.workflow.updateMany({
+      where: { type: data.type, isDefault: true, NOT: { id: workflow.id } },
+      data: { isDefault: false },
+    });
+  }
+
   await prisma.$transaction([
-    prisma.workflowStep.deleteMany({ where: { type } }),
+    prisma.workflowStep.deleteMany({ where: { workflowId: workflow.id } }),
     prisma.workflowStep.createMany({
       data: clean.map((s, i) => ({
-        type,
+        workflowId: workflow.id,
         ordre: i + 1,
         nom: s.nom,
         validatorRole: s.validatorRole ?? null,
@@ -193,9 +320,22 @@ export async function saveWorkflow(
       })),
     }),
   ]);
-  await audit("WORKFLOW_MODIFIE", { userId: user.id, cible: type, details: `${clean.length} étapes` });
+  await audit("WORKFLOW_MODIFIE", {
+    userId: user.id,
+    cible: data.nom,
+    details: `${data.type} — ${clean.length} étapes`,
+  });
   revalidatePath("/parametres/workflows");
-  return { success: "Circuit de validation enregistré." };
+  return { success: `Circuit « ${data.nom} » enregistré.`, id: workflow.id };
+}
+
+export async function deleteWorkflowDef(id: string): Promise<void> {
+  const user = await requireUser("ADMIN");
+  const workflow = await prisma.workflow.findUnique({ where: { id } });
+  if (!workflow) return;
+  await prisma.workflow.delete({ where: { id } }); // les demandes passées gardent leur historique
+  await audit("WORKFLOW_SUPPRIME", { userId: user.id, cible: workflow.nom });
+  revalidatePath("/parametres/workflows");
 }
 
 // ── Utilisateurs ───────────────────────────────────────────────────────────

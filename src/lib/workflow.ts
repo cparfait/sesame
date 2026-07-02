@@ -3,6 +3,7 @@ import type {
   Request,
   RequestType,
   User,
+  Workflow,
   WorkflowStep,
 } from "@prisma/client";
 import { prisma } from "./db";
@@ -15,12 +16,60 @@ import {
   type ModificationPayload,
 } from "./constants";
 
+// ── Sélection du circuit applicable ────────────────────────────────────────
+
+const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+
+/**
+ * Choisit le circuit de validation d'une nouvelle demande :
+ * 1. parmi les circuits actifs du type, dans l'ordre de priorité décroissante,
+ *    le premier dont TOUS les critères définis correspondent
+ *    (service de la demande, groupe AD du demandeur) ;
+ * 2. sinon le circuit marqué « par défaut » ;
+ * 3. sinon aucun circuit → approbation immédiate.
+ */
+export async function selectWorkflow(
+  type: RequestType,
+  requester: User,
+  service: string | null | undefined,
+): Promise<(Workflow & { steps: WorkflowStep[] }) | null> {
+  const candidates = await prisma.workflow.findMany({
+    where: { type, actif: true },
+    include: { steps: { orderBy: { ordre: "asc" } } },
+    orderBy: [{ priorite: "desc" }, { createdAt: "asc" }],
+  });
+  if (candidates.length === 0) return null;
+
+  let adGroups: string[] = [];
+  const adAccount = await prisma.adAccount.findUnique({
+    where: { samAccountName: requester.login },
+  });
+  if (adAccount?.groups) {
+    adGroups = adAccount.groups.split("\n").map(norm).filter(Boolean);
+  }
+
+  for (const w of candidates) {
+    if (!w.matchService && !w.matchAdGroup) continue; // sans critère : défaut uniquement
+    if (w.steps.length === 0) continue;
+    const okService =
+      !w.matchService || (!!service && norm(service).includes(norm(w.matchService)));
+    const okGroup = !w.matchAdGroup || adGroups.includes(norm(w.matchAdGroup));
+    if (okService && okGroup) return w;
+  }
+  return candidates.find((w) => w.isDefault && w.steps.length > 0) ?? null;
+}
+
 // ── Étapes & valideurs ─────────────────────────────────────────────────────
 
-export async function getSteps(type: RequestType): Promise<WorkflowStep[]> {
-  return prisma.workflowStep.findMany({
-    where: { type },
-    orderBy: { ordre: "asc" },
+async function currentStepOf(request: Request): Promise<WorkflowStep | null> {
+  if (!request.workflowId) return null;
+  return prisma.workflowStep.findUnique({
+    where: {
+      workflowId_ordre: {
+        workflowId: request.workflowId,
+        ordre: request.currentStepOrdre,
+      },
+    },
   });
 }
 
@@ -48,11 +97,9 @@ export async function pendingRequestsFor(user: User): Promise<Request[]> {
   const result: Request[] = [];
   const cache = new Map<string, boolean>();
   for (const request of pending) {
-    const key = `${request.type}:${request.currentStepOrdre}`;
+    const key = `${request.workflowId}:${request.currentStepOrdre}`;
     if (!cache.has(key)) {
-      const step = await prisma.workflowStep.findUnique({
-        where: { type_ordre: { type: request.type, ordre: request.currentStepOrdre } },
-      });
+      const step = await currentStepOf(request);
       const validators = step ? await stepValidators(step) : [];
       cache.set(key, validators.some((v) => v.id === user.id));
     }
@@ -64,9 +111,7 @@ export async function pendingRequestsFor(user: User): Promise<Request[]> {
 export async function canDecide(request: Request, user: User): Promise<boolean> {
   if (request.statut !== "EN_VALIDATION") return false;
   if (user.role === "ADMIN") return true;
-  const step = await prisma.workflowStep.findUnique({
-    where: { type_ordre: { type: request.type, ordre: request.currentStepOrdre } },
-  });
+  const step = await currentStepOf(request);
   if (!step) return false;
   const validators = await stepValidators(step);
   return validators.some((v) => v.id === user.id);
@@ -80,27 +125,35 @@ export async function createRequest(
   payload: object,
   agentId?: string,
 ): Promise<Request> {
-  const steps = await getSteps(type);
+  // service de rattachement : celui de la fiche (création) ou de l'agent concerné
+  let service = (payload as { service?: string }).service ?? null;
+  if (agentId) {
+    const agent = await prisma.agent.findUnique({ where: { id: agentId } });
+    service = agent?.service ?? service;
+  }
+  const workflow = await selectWorkflow(type, requester, service);
+
   const request = await prisma.request.create({
     data: {
       type,
       requesterId: requester.id,
       agentId,
+      workflowId: workflow?.id,
       payload: payload as never,
-      currentStepOrdre: steps[0]?.ordre ?? 0,
+      currentStepOrdre: workflow?.steps[0]?.ordre ?? 0,
     },
   });
   await audit("DEMANDE_CREEE", {
     userId: requester.id,
     cible: `Demande n° ${request.numero}`,
-    details: REQUEST_TYPE_LABELS[type],
+    details: `${REQUEST_TYPE_LABELS[type]}${workflow ? ` — circuit « ${workflow.nom} »` : " — sans circuit"}`,
   });
 
-  if (steps.length === 0) {
-    // aucun circuit paramétré : approbation immédiate
+  if (!workflow) {
+    // aucun circuit applicable : approbation immédiate
     await approve(request.id);
   } else {
-    await notifyStep(request.id, steps[0]);
+    await notifyStep(request.id, workflow.steps[0]);
   }
   return request;
 }
@@ -136,9 +189,7 @@ export async function decide(
   if (!(await canDecide(request, user))) {
     return { ok: false, error: "Vous n'êtes pas habilité à valider cette étape." };
   }
-  const step = await prisma.workflowStep.findUnique({
-    where: { type_ordre: { type: request.type, ordre: request.currentStepOrdre } },
-  });
+  const step = await currentStepOf(request);
 
   await prisma.requestValidation.create({
     data: {
@@ -165,10 +216,15 @@ export async function decide(
     return { ok: true };
   }
 
-  const next = await prisma.workflowStep.findFirst({
-    where: { type: request.type, ordre: { gt: request.currentStepOrdre } },
-    orderBy: { ordre: "asc" },
-  });
+  const next = request.workflowId
+    ? await prisma.workflowStep.findFirst({
+        where: {
+          workflowId: request.workflowId,
+          ordre: { gt: request.currentStepOrdre },
+        },
+        orderBy: { ordre: "asc" },
+      })
+    : null;
   if (next) {
     await prisma.request.update({
       where: { id: requestId },
@@ -208,7 +264,7 @@ async function notifyRequester(
 async function approve(requestId: string): Promise<void> {
   const request = await prisma.request.findUniqueOrThrow({ where: { id: requestId } });
   const agentId = await applyEffects(request);
-  await generateTasks(request, agentId);
+  await generateTasks(request);
   await prisma.request.update({
     where: { id: requestId },
     data: { statut: "APPROUVEE", agentId: agentId ?? request.agentId },
@@ -251,6 +307,7 @@ async function applyEffects(request: Request): Promise<string | undefined> {
         fonction: p.fonction || null,
         site: p.site || null,
         responsable: p.responsable || null,
+        teletravail: p.teletravail || null,
         dateArrivee: p.dateArrivee ? new Date(p.dateArrivee) : null,
         dateFinContrat: p.dateFinContrat ? new Date(p.dateFinContrat) : null,
         accesses: {
@@ -278,6 +335,7 @@ async function applyEffects(request: Request): Promise<string | undefined> {
         ...(c.fonction !== undefined && { fonction: c.fonction || null }),
         ...(c.site !== undefined && { site: c.site || null }),
         ...(c.responsable !== undefined && { responsable: c.responsable || null }),
+        ...(c.teletravail !== undefined && { teletravail: c.teletravail || null }),
         ...(c.dateFinContrat !== undefined && {
           dateFinContrat: c.dateFinContrat ? new Date(c.dateFinContrat) : null,
         }),
@@ -317,7 +375,7 @@ async function applyEffects(request: Request): Promise<string | undefined> {
 }
 
 /** Génère la checklist de provisionnement selon le type de demande. */
-async function generateTasks(request: Request, createdAgentId?: string): Promise<void> {
+async function generateTasks(request: Request): Promise<void> {
   const tasks: { label: string; categorie: string; applicationId?: string }[] = [];
 
   if (request.type === "CREATION") {
@@ -327,6 +385,12 @@ async function generateTasks(request: Request, createdAgentId?: string): Promise
       { label: "Créer la boîte mail", categorie: "Messagerie" },
       { label: "Faire signer la charte informatique", categorie: "Autre" },
     );
+    if (p.teletravail) {
+      tasks.push({
+        label: `Ouvrir l'accès télétravail (VPN, MFA) — ${p.teletravail}`,
+        categorie: "AD",
+      });
+    }
     for (const a of p.applications ?? []) {
       tasks.push({
         label: `Ouvrir l'accès à ${a.nom}${a.profil ? ` (profil : ${a.profil})` : ""}`,
@@ -342,6 +406,14 @@ async function generateTasks(request: Request, createdAgentId?: string): Promise
   if (request.type === "MODIFICATION") {
     const p = request.payload as unknown as ModificationPayload;
     tasks.push({ label: "Mettre à jour la fiche AD (service, groupes, intitulé)", categorie: "AD" });
+    if (p.champs?.teletravail !== undefined) {
+      tasks.push({
+        label: p.champs.teletravail
+          ? `Mettre à jour l'accès télétravail (VPN, MFA) — ${p.champs.teletravail}`
+          : "Fermer l'accès télétravail (VPN)",
+        categorie: "AD",
+      });
+    }
     for (const a of p.addApplications ?? []) {
       tasks.push({
         label: `Ouvrir l'accès à ${a.nom}${a.profil ? ` (profil : ${a.profil})` : ""}`,
@@ -359,6 +431,7 @@ async function generateTasks(request: Request, createdAgentId?: string): Promise
     tasks.push(
       { label: "Désactiver le compte AD", categorie: "AD" },
       { label: "Couper ou rediriger la boîte mail", categorie: "Messagerie" },
+      { label: "Fermer les accès distants (VPN, MFA)", categorie: "AD" },
       { label: "Récupérer le matériel (poste, téléphone, badge, clés)", categorie: "Matériel" },
     );
     for (const a of p.accesses ?? []) {
@@ -371,7 +444,6 @@ async function generateTasks(request: Request, createdAgentId?: string): Promise
       data: tasks.map((t) => ({ ...t, requestId: request.id })),
     });
   }
-  void createdAgentId;
 }
 
 // ── Clôture quand toutes les tâches sont faites ────────────────────────────

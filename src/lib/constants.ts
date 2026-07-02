@@ -76,6 +76,13 @@ export const STATUTS_EMPLOI = [
   "Autre",
 ];
 
+export const TELETRAVAIL_OPTIONS = [
+  "1 jour / semaine",
+  "2 jours / semaine",
+  "3 jours / semaine",
+  "Ponctuel",
+];
+
 export const EQUIPEMENTS = [
   "Poste informatique fixe",
   "Ordinateur portable",
@@ -132,6 +139,7 @@ export type CreationPayload = {
   responsable?: string;
   dateArrivee?: string;
   dateFinContrat?: string;
+  teletravail?: string; // ex. « 2 jours / semaine » — vide = pas de télétravail
   copieDe?: string; // « créer sur le modèle de l'agent… »
   applications: AppDemandee[];
   equipements: string[];
@@ -151,6 +159,7 @@ export type ModificationPayload = {
       | "fonction"
       | "site"
       | "responsable"
+      | "teletravail"
       | "dateFinContrat"
     >
   >;

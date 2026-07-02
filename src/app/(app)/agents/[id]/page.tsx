@@ -20,7 +20,7 @@ export default async function AgentPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const user = await requireUser();
+  const user = await requireUser("VALIDATEUR", "TECHNICIEN", "LECTEUR");
   const agent = await prisma.agent.findUnique({
     where: { id },
     include: {
@@ -47,6 +47,7 @@ export default async function AgentPage({
     ["Fonction", agent.fonction ?? "—"],
     ["Site", agent.site ?? "—"],
     ["Responsable", agent.responsable ?? "—"],
+    ["Télétravail", agent.teletravail ?? "—"],
     ["Date d'arrivée", fmtDate(agent.dateArrivee)],
     ["Fin de contrat", fmtDate(agent.dateFinContrat)],
     ["Date de départ", fmtDate(agent.dateDepart)],

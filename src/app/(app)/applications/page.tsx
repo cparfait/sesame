@@ -5,7 +5,7 @@ import { requireUser } from "@/lib/session";
 import { Badge, EmptyState, PageHeader, btnPrimary } from "@/components/ui";
 
 export default async function ApplicationsPage() {
-  const user = await requireUser();
+  const user = await requireUser("VALIDATEUR", "TECHNICIEN", "LECTEUR");
   const apps = await prisma.application.findMany({
     orderBy: { nom: "asc" },
     include: {
@@ -44,11 +44,18 @@ export default async function ApplicationsPage() {
             >
               <div className="flex items-start justify-between gap-2">
                 <p className="font-semibold">{app.nom}</p>
-                {!app.actif && (
-                  <Badge color="bg-slate-100 text-slate-500 ring-slate-500/20">
-                    Inactive
-                  </Badge>
-                )}
+                <span className="flex gap-1.5">
+                  {app.source === "sentinelle" && (
+                    <Badge color="bg-cyan-50 text-cyan-700 ring-cyan-600/20">
+                      Sentinelle
+                    </Badge>
+                  )}
+                  {!app.actif && (
+                    <Badge color="bg-slate-100 text-slate-500 ring-slate-500/20">
+                      Inactive
+                    </Badge>
+                  )}
+                </span>
               </div>
               {app.description && (
                 <p className="mt-1 line-clamp-2 text-sm text-slate-500">

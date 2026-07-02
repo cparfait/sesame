@@ -40,6 +40,14 @@
 - [x] **Compte admin local de secours** (`admin` / variable `SESAME_ADMIN_PASSWORD`, créé automatiquement au premier démarrage)
 - [x] Dockerfile + docker-compose pour Portainer (migrations automatiques au démarrage)
 
+### Évolutions livrées le 02/07/2026 (v1.1)
+
+- [x] **Circuits de validation multiples** : autant de circuits que nécessaire par type (un par service, direction…), rattachés par critères — service de la demande et/ou **groupe AD du demandeur** (autocomplétion depuis la synchro AD) — avec circuit par défaut et priorités
+- [x] **Vue demandeur simplifiée** : un agent au rôle Demandeur ne voit que « Tableau de bord » et « Mes demandes » (dépôt + suivi de ses propres demandes) ; les autres pages lui sont fermées
+- [x] **Section télétravail** dans les demandes de création et de modification (rythme hebdomadaire) ; génère automatiquement la tâche « ouvrir l'accès télétravail (VPN, MFA) » ; champ visible sur la fiche agent ; le départ ferme les accès distants
+- [x] **Interconnexion Sentinelle** : import du catalogue d'applications (modèle Asset) via API + jeton, badge « Sentinelle » sur les applications importées, désactivation automatique des applications retirées du catalogue — blueprint Flask prêt à coller fourni dans `docs/sentinelle_api.py`
+- [x] Étude comparative des outils open-source existants : `docs/ETUDE_OUTILS_EXISTANTS.md` (36 outils recensés, 10 vérifiés)
+
 ### Reste à faire avant mise en production
 
 - [ ] Configurer le LDAPS avec le vrai AD et tester (compte de service en lecture seule à créer)
@@ -64,6 +72,8 @@
 | 01/07/2026 | Déplacement du projet vers `C:\tmp\__DEV__\workflow` ; lancement d'une étude des outils open-source existants (GitHub) pour s'en inspirer |
 | 02/07/2026 | Développement v1 complet : demandes, workflows, mails, annuaire AD, paramétrage, Docker. Compilation OK |
 | 02/07/2026 | Test de bout en bout validé en local : connexion admin local → création d'application → demande de création → approbation → checklist 5 tâches → clôture automatique → agent créé au référentiel avec son accès |
+| 02/07/2026 | Premier push sur https://github.com/cparfait/sesame |
+| 02/07/2026 | v1.1 : circuits multiples (service / groupe AD), vue demandeur, télétravail, interconnexion Sentinelle. Testé de bout en bout : circuit par défaut appliqué → validation requise → tâche VPN télétravail générée ; vue demandeur vérifiée (menu réduit, pages restreintes bloquées) |
 
 ## Risques & points d'attention
 

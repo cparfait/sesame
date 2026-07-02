@@ -71,6 +71,7 @@ export default async function NouvelleDemandePage({
     fonction: a.fonction,
     site: a.site,
     responsable: a.responsable,
+    teletravail: a.teletravail,
     dateFinContrat: a.dateFinContrat?.toISOString().slice(0, 10) ?? null,
   }));
 

@@ -19,6 +19,11 @@ export type SmtpSettings = {
   from: string; // "Sésame <sesame@collectivite.fr>"
 };
 
+export type SentinelleSettings = {
+  url: string; // ex. https://sentinelle.collectivite.fr
+  token?: string; // jeton d'API (SESAME_API_TOKEN côté Sentinelle)
+};
+
 export type GeneralSettings = {
   orgName: string; // nom de la collectivité
   appUrl: string; // https://sesame.collectivite.fr — utilisé dans les mails
@@ -45,6 +50,8 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
 
 export const getLdapSettings = () => getSetting<LdapSettings>("ldap");
 export const getSmtpSettings = () => getSetting<SmtpSettings>("smtp");
+export const getSentinelleSettings = () =>
+  getSetting<SentinelleSettings>("sentinelle");
 export const getGeneralSettings = async (): Promise<GeneralSettings> =>
   (await getSetting<GeneralSettings>("general")) ?? {
     orgName: "Collectivité",

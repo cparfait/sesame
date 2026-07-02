@@ -4,13 +4,16 @@ import { useActionState } from "react";
 import {
   saveGeneral,
   saveLdap,
+  saveSentinelle,
   saveSmtp,
+  syncSentinelle,
   testLdap,
   testSmtp,
 } from "@/lib/actions/settings";
 import type {
   GeneralSettings,
   LdapSettings,
+  SentinelleSettings,
   SmtpSettings,
 } from "@/lib/settings";
 import { Alert, Card, Field, Input, Select, btnSecondary } from "@/components/ui";
@@ -119,6 +122,57 @@ export function LdapForm({ settings }: { settings: LdapSettings | null }) {
           <div className="flex justify-end gap-3">
             <SubmitButton className={btnSecondary} formAction={testAction}>
               Tester la connexion
+            </SubmitButton>
+            <SubmitButton>Enregistrer</SubmitButton>
+          </div>
+        </div>
+      </Card>
+    </form>
+  );
+}
+
+export function SentinelleForm({
+  settings,
+}: {
+  settings: SentinelleSettings | null;
+}) {
+  const [saveState, saveAction] = useActionState(saveSentinelle, null);
+  const [syncState, syncAction] = useActionState(syncSentinelle, null);
+  return (
+    <form action={saveAction}>
+      <Card>
+        <div className="space-y-4">
+          <Alert state={saveState} />
+          <Alert state={syncState} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="URL de Sentinelle" required>
+              <Input
+                name="url"
+                defaultValue={settings?.url ?? ""}
+                placeholder="https://sentinelle.collectivite.fr"
+                required
+              />
+            </Field>
+            <Field label="Jeton d'API (SESAME_API_TOKEN côté Sentinelle)">
+              <Input
+                name="token"
+                type="password"
+                placeholder={settings?.token ? "•••••• (inchangé si vide)" : ""}
+              />
+            </Field>
+          </div>
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+            Sésame importe le <strong>catalogue d&apos;applications</strong> de
+            Sentinelle (modèle « Asset », type application) via{" "}
+            <code>GET /api/assets?type=application</code>. Le petit blueprint
+            Flask à installer côté Sentinelle est fourni dans{" "}
+            <code>docs/sentinelle_api.py</code> du dépôt Sésame. Les applications
+            importées sont marquées « Sentinelle » et se mettent à jour à chaque
+            synchronisation ; celles retirées du catalogue sont désactivées ici.
+          </p>
+          <div className="flex justify-end gap-3">
+            <SubmitButton className={btnSecondary} formAction={syncAction}>
+              Synchroniser maintenant
             </SubmitButton>
             <SubmitButton>Enregistrer</SubmitButton>
           </div>

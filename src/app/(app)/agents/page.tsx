@@ -10,7 +10,7 @@ export default async function AgentsPage({
 }: {
   searchParams: Promise<{ q?: string; statut?: string }>;
 }) {
-  await requireUser();
+  await requireUser("VALIDATEUR", "TECHNICIEN", "LECTEUR");
   const params = await searchParams;
   const q = params.q?.trim() ?? "";
   const statut = params.statut === "PARTI" ? "PARTI" : params.statut === "ACTIF" ? "ACTIF" : undefined;

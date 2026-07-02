@@ -14,12 +14,33 @@ import {
 } from "lucide-react";
 import type { Role } from "@prisma/client";
 
+// DEMANDEUR : vue simplifiée — uniquement ses demandes
 const items = [
   { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
-  { href: "/demandes", label: "Demandes", icon: ClipboardList },
-  { href: "/agents", label: "Agents", icon: Users },
-  { href: "/applications", label: "Applications", icon: AppWindow },
-  { href: "/annuaire", label: "Annuaire AD", icon: Network },
+  {
+    href: "/demandes",
+    label: "Demandes",
+    labelDemandeur: "Mes demandes",
+    icon: ClipboardList,
+  },
+  {
+    href: "/agents",
+    label: "Agents",
+    icon: Users,
+    roles: ["ADMIN", "VALIDATEUR", "TECHNICIEN", "LECTEUR"],
+  },
+  {
+    href: "/applications",
+    label: "Applications",
+    icon: AppWindow,
+    roles: ["ADMIN", "VALIDATEUR", "TECHNICIEN", "LECTEUR"],
+  },
+  {
+    href: "/annuaire",
+    label: "Annuaire AD",
+    icon: Network,
+    roles: ["ADMIN", "VALIDATEUR", "TECHNICIEN", "LECTEUR"],
+  },
   { href: "/journal", label: "Journal", icon: ScrollText, roles: ["ADMIN"] },
   { href: "/parametres", label: "Paramètres", icon: Settings, roles: ["ADMIN"] },
 ];
@@ -54,7 +75,9 @@ export function Sidebar({ role }: { role: Role }) {
                 }`}
               >
                 <Icon className="h-4 w-4" />
-                {item.label}
+                {role === "DEMANDEUR" && item.labelDemandeur
+                  ? item.labelDemandeur
+                  : item.label}
               </Link>
             );
           })}

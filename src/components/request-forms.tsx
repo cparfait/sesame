@@ -7,7 +7,12 @@ import {
   createDepartRequest,
   createModificationRequest,
 } from "@/lib/actions/requests";
-import { CIVILITES, EQUIPEMENTS, STATUTS_EMPLOI } from "@/lib/constants";
+import {
+  CIVILITES,
+  EQUIPEMENTS,
+  STATUTS_EMPLOI,
+  TELETRAVAIL_OPTIONS,
+} from "@/lib/constants";
 import { Alert, Card, Field, Input, Select, Textarea } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 
@@ -24,6 +29,7 @@ export type AgentDto = {
   fonction: string | null;
   site: string | null;
   responsable: string | null;
+  teletravail: string | null;
   dateFinContrat: string | null;
 };
 export type AccessDto = { id: string; label: string };
@@ -199,6 +205,23 @@ export function CreationForm({ applications }: { applications: ApplicationDto[] 
         </div>
       </Card>
 
+      <Card title="Télétravail">
+        <div className="grid items-end gap-4 sm:grid-cols-2">
+          <Field label="Rythme de télétravail">
+            <Select name="teletravail" defaultValue="">
+              <option value="">Pas de télétravail</option>
+              {TELETRAVAIL_OPTIONS.map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </Select>
+          </Field>
+          <p className="pb-2 text-xs text-slate-400">
+            Si un rythme est choisi, une tâche « ouvrir l&apos;accès télétravail
+            (VPN, MFA) » sera ajoutée à la checklist de la DSI.
+          </p>
+        </div>
+      </Card>
+
       <Card title="Accès aux applications">
         <AppPicker applications={applications} legend="Applications à ouvrir" />
       </Card>
@@ -296,6 +319,14 @@ export function ModificationForm({
                   type="date"
                   defaultValue={agent.dateFinContrat ?? ""}
                 />
+              </Field>
+              <Field label="Télétravail">
+                <Select name="teletravail" defaultValue={agent.teletravail ?? ""}>
+                  <option value="">Pas de télétravail</option>
+                  {TELETRAVAIL_OPTIONS.map((t) => (
+                    <option key={t}>{t}</option>
+                  ))}
+                </Select>
               </Field>
             </div>
           </Card>

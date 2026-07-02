@@ -1,8 +1,8 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Ban, CircleCheck, CircleDashed, CircleDot, CircleX } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { canDecide, getSteps } from "@/lib/workflow";
+import { canDecide } from "@/lib/workflow";
 import { cancelRequest } from "@/lib/actions/requests";
 import { Badge, Card, PageHeader, btnDanger } from "@/components/ui";
 import { DecideBox } from "@/components/decide-box";
@@ -34,6 +34,7 @@ const CHAMP_LABELS: Record<string, string> = {
   responsable: "Responsable",
   dateArrivee: "Date d'arrivée",
   dateFinContrat: "Fin de contrat",
+  teletravail: "Télétravail",
   copieDe: "Sur le modèle de",
 };
 
@@ -80,13 +81,18 @@ export default async function DemandeDetailPage({
     include: {
       requester: true,
       agent: true,
+      workflow: { include: { steps: { orderBy: { ordre: "asc" } } } },
       validations: { include: { user: true }, orderBy: { createdAt: "asc" } },
       tasks: { include: { doneBy: true }, orderBy: { id: "asc" } },
     },
   });
   if (!request) notFound();
+  // un demandeur ne voit que ses propres demandes
+  if (user.role === "DEMANDEUR" && request.requesterId !== user.id) {
+    redirect("/demandes");
+  }
 
-  const steps = await getSteps(request.type);
+  const steps = request.workflow?.steps ?? [];
   const userCanDecide = await canDecide(request, user);
   const currentStep = steps.find((s) => s.ordre === request.currentStepOrdre);
   const canCancel =
@@ -214,10 +220,16 @@ export default async function DemandeDetailPage({
         </div>
 
         <div className="space-y-5">
-          <Card title="Circuit de validation">
+          <Card
+            title={
+              request.workflow
+                ? `Circuit — ${request.workflow.nom}`
+                : "Circuit de validation"
+            }
+          >
             {steps.length === 0 ? (
               <p className="text-sm text-slate-400">
-                Aucun circuit paramétré pour ce type : approbation immédiate.
+                Aucun circuit applicable : approbation immédiate.
               </p>
             ) : (
               <ol className="space-y-4">

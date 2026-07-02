@@ -60,6 +60,7 @@ export async function createCreationRequest(
     responsable: str(formData, "responsable") || undefined,
     dateArrivee: str(formData, "dateArrivee") || undefined,
     dateFinContrat: str(formData, "dateFinContrat") || undefined,
+    teletravail: str(formData, "teletravail") || undefined,
     copieDe: str(formData, "copieDe") || undefined,
     applications: await parseApplications(formData),
     equipements: formData.getAll("equipements").map(String),
@@ -89,6 +90,7 @@ export async function createModificationRequest(
     ["fonction", agent.fonction],
     ["site", agent.site],
     ["responsable", agent.responsable],
+    ["teletravail", agent.teletravail],
     [
       "dateFinContrat",
       agent.dateFinContrat ? agent.dateFinContrat.toISOString().slice(0, 10) : null,
