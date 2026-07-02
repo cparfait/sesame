@@ -44,6 +44,27 @@ cd sesame
 
 ## 3. Installation en développement
 
+### Windows (invite de commandes ou PowerShell)
+
+```cmd
+:: 1. Dépendances
+npm install
+
+:: 2. Configuration : copier l'exemple puis ajuster si besoin
+copy .env.example .env
+
+:: 3. Base PostgreSQL locale (port 5433 pour ne pas gêner un Postgres existant)
+docker run -d --name sesame-db-dev -e POSTGRES_USER=sesame -e POSTGRES_PASSWORD=sesame -e POSTGRES_DB=sesame -p 5433:5432 postgres:17-alpine
+
+:: 4. Création des tables
+npx prisma migrate dev
+
+:: 5. Lancement
+npm run dev
+```
+
+### Linux / macOS
+
 ```bash
 # 1. Dépendances
 npm install
@@ -100,7 +121,7 @@ appliquées automatiquement au démarrage) et [docker-compose.yml](docker-compos
 4. **Deploy the stack** — l'application écoute sur le port `3000` ; placez votre reverse
    proxy TLS habituel devant (ex. `sesame.votre-collectivite.fr`).
 
-### Option B — En ligne de commande sur le serveur Docker
+### Option B — En ligne de commande sur le serveur Docker (hôte Linux)
 
 ```bash
 git clone https://github.com/cparfait/sesame.git && cd sesame
