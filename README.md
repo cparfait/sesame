@@ -1,36 +1,69 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🔑 Sésame — Comptes & habilitations
 
-## Getting Started
+Outil web interne de gestion des **entrées / sorties / modifications de comptes** pour une
+collectivité territoriale : demandes avec circuit de validation paramétrable, alertes mail,
+suivi des accès aux applications métiers, annuaire Active Directory en lecture (LDAPS).
 
-First, run the development server:
+**Stack** : Next.js 16 (TypeScript) · PostgreSQL · Prisma · Tailwind CSS · Docker.
+
+## Fonctionnalités
+
+- **Demandes** : création / modification / départ d'agent, fiches complètes adaptées à une
+  collectivité (statut d'emploi, direction/service, matricule, dates de contrat…)
+- **Workflows paramétrables** : étapes ordonnées par type de demande, valideurs par rôle ou
+  nommés, notifications mail à chaque étape, refus motivé
+- **Provisionnement** : checklist générée à l'approbation (AD, messagerie, applications,
+  matériel), clôture automatique quand tout est fait
+- **Référentiel** : agents, applications métiers (profils d'accès), accès attribués/supprimés
+  avec historique
+- **Annuaire AD** : synchronisation LDAPS **en lecture seule**, rapprochement automatique
+  agents ↔ comptes, alertes « compte encore actif pour un agent parti »
+- **Rôles** : Administrateur, Valideur, Technicien, Demandeur, Lecteur
+- **Journal d'audit** complet
+
+## Démarrage rapide (développement)
 
 ```bash
+docker run -d --name sesame-db-dev -e POSTGRES_USER=sesame -e POSTGRES_PASSWORD=sesame \
+  -e POSTGRES_DB=sesame -p 5433:5432 postgres:17-alpine
+npm install
+npx prisma migrate dev
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Connexion
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Compte admin local de secours** : identifiant `admin`, mot de passe défini par la
+  variable `SESAME_ADMIN_PASSWORD` (défaut : `sesame`). Il est créé automatiquement au
+  premier essai de connexion tant qu'aucun administrateur actif n'existe.
+  **Changez ce mot de passe immédiatement en production.**
+- **Comptes AD** : une fois le LDAPS configuré (Paramètres → Annuaire AD), les agents se
+  connectent avec leur identifiant Windows ; leur compte Sésame est créé à la volée avec le
+  rôle par défaut choisi.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Déploiement (Docker / Portainer)
 
-## Learn More
+Le [docker-compose.yml](docker-compose.yml) fournit une stack complète (app + PostgreSQL).
+Variables à définir dans Portainer :
 
-To learn more about Next.js, take a look at the following resources:
+| Variable | Rôle |
+|---|---|
+| `POSTGRES_PASSWORD` | mot de passe de la base (obligatoire) |
+| `SESSION_SECRET` | chaîne aléatoire de 32+ caractères (obligatoire) |
+| `SESAME_ADMIN_PASSWORD` | mot de passe initial du compte `admin` |
+| `COOKIE_SECURE=0` | uniquement si l'accès se fait en HTTP sans reverse proxy TLS |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Les migrations de base sont appliquées automatiquement au démarrage du conteneur
+([docker-entrypoint.sh](docker-entrypoint.sh)).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Configuration dans l'interface (menu Paramètres, rôle Administrateur)
 
-## Deploy on Vercel
+1. **Général** : nom de la collectivité, URL publique (liens dans les mails)
+2. **Annuaire AD** : URL `ldaps://…`, DN de base, compte de service lecture seule, test de
+   connexion, synchronisation
+3. **Messagerie** : serveur SMTP, mail de test
+4. **Circuits de validation** : étapes par type de demande
+5. **Utilisateurs & rôles** : attribution des rôles, comptes locaux d'appoint
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Voir [SUIVI_PROJET.md](SUIVI_PROJET.md) pour l'avancement et la feuille de route (v2 :
+écriture AD, revues d'habilitations, rappels automatiques).

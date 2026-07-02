@@ -1,0 +1,38 @@
+# Stack Portainer — Sésame (comptes & habilitations)
+# Renseignez les variables d'environnement dans Portainer (ou un fichier .env) :
+#   POSTGRES_PASSWORD  mot de passe de la base (obligatoire)
+#   SESSION_SECRET     chaîne aléatoire de 32+ caractères (obligatoire)
+#   SESAME_ADMIN_PASSWORD  mot de passe initial du compte local « admin »
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sesame
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD}
+      POSTGRES_DB: sesame
+    volumes:
+      - sesame-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sesame -d sesame"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    # ou, avec la CI GitHub : image: ghcr.io/VOTRE_COMPTE/sesame:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://sesame:${POSTGRES_PASSWORD}@db:5432/sesame
+      SESSION_SECRET: ${SESSION_SECRET:?definir SESSION_SECRET}
+      SESAME_ADMIN_PASSWORD: ${SESAME_ADMIN_PASSWORD:-sesame}
+      # COOKIE_SECURE: "0"   # décommentez si l'accès se fait en http (sans reverse proxy TLS)
+    ports:
+      - "3000:3000"
+
+volumes:
+  sesame-db:

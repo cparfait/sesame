@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Utilisateurs de l'outil ────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  VALIDATEUR
+  TECHNICIEN
+  DEMANDEUR
+  LECTEUR
+}
+
+model User {
+  id           String   @id @default(cuid())
+  login        String   @unique // sAMAccountName ou identifiant local
+  displayName  String
+  email        String?
+  role         Role     @default(DEMANDEUR)
+  isLocal      Boolean  @default(false)
+  passwordHash String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  requests    Request[]           @relation("requester")
+  validations RequestValidation[]
+  tasksDone   ProvisionTask[]     @relation("doneBy")
+  auditLogs   AuditLog[]
+}
+
+// ── Référentiel agents ─────────────────────────────────────────────────────
+
+enum AgentStatut {
+  ACTIF
+  PARTI
+}
+
+model Agent {
+  id            String      @id @default(cuid())
+  civilite      String?
+  nom           String
+  prenom        String
+  matricule     String?
+  email         String?
+  telephone     String?
+  statutEmploi  String // Titulaire, Contractuel, Stagiaire, Apprenti, Élu, Prestataire…
+  direction     String?
+  service       String?
+  fonction      String?
+  site          String?
+  responsable   String?
+  dateArrivee   DateTime?
+  dateDepart    DateTime?
+  dateFinContrat DateTime?
+  statut        AgentStatut @default(ACTIF)
+  adLogin       String? // rapprochement avec le compte AD (sAMAccountName)
+  commentaire   String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  accesses AgentAccess[]
+  requests Request[]
+}
+
+// ── Applications métiers & accès ───────────────────────────────────────────
+
+model Application {
+  id          String   @id @default(cuid())
+  nom         String   @unique
+  description String?
+  referent    String? // référent fonctionnel ou technique
+  profils     String? // profils possibles, séparés par des virgules
+  actif       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  accesses AgentAccess[]
+  tasks    ProvisionTask[]
+}
+
+enum AccessStatut {
+  ACTIF
+  A_SUPPRIMER
+  SUPPRIME
+}
+
+model AgentAccess {
+  id              String       @id @default(cuid())
+  agentId         String
+  applicationId   String
+  profil          String?
+  statut          AccessStatut @default(ACTIF)
+  dateAttribution DateTime     @default(now())
+  dateSuppression DateTime?
+  commentaire     String?
+
+  agent       Agent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([applicationId])
+}
+
+// ── Demandes & workflow ────────────────────────────────────────────────────
+
+enum RequestType {
+  CREATION
+  MODIFICATION
+  DEPART
+}
+
+enum RequestStatut {
+  EN_VALIDATION
+  APPROUVEE // validée, en cours de provisionnement
+  REFUSEE
+  TERMINEE
+  ANNULEE
+}
+
+model WorkflowStep {
+  id               String      @id @default(cuid())
+  type             RequestType
+  ordre            Int
+  nom              String // ex. « Validation chef de service »
+  validatorRole    Role? // tout utilisateur ayant ce rôle peut valider
+  validatorUserIds String? // ou liste d'ids utilisateurs, séparés par des virgules
+
+  @@unique([type, ordre])
+}
+
+model Request {
+  id              String        @id @default(cuid())
+  numero          Int           @unique @default(autoincrement())
+  type            RequestType
+  statut          RequestStatut @default(EN_VALIDATION)
+  requesterId     String
+  agentId         String? // agent concerné (modification / départ)
+  payload         Json // fiche complète de la demande
+  currentStepOrdre Int          @default(1)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  closedAt        DateTime?
+
+  requester   User                @relation("requester", fields: [requesterId], references: [id])
+  agent       Agent?              @relation(fields: [agentId], references: [id])
+  validations RequestValidation[]
+  tasks       ProvisionTask[]
+
+  @@index([statut])
+}
+
+enum Decision {
+  APPROUVE
+  REFUSE
+}
+
+model RequestValidation {
+  id          String   @id @default(cuid())
+  requestId   String
+  stepOrdre   Int
+  stepNom     String
+  decision    Decision
+  userId      String
+  commentaire String?
+  createdAt   DateTime @default(now())
+
+  request Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+}
+
+enum TaskStatut {
+  A_FAIRE
+  FAIT
+  NON_APPLICABLE
+}
+
+model ProvisionTask {
+  id            String     @id @default(cuid())
+  requestId     String
+  label         String
+  categorie     String // AD, Messagerie, Application, Matériel, Autre
+  applicationId String?
+  statut        TaskStatut @default(A_FAIRE)
+  doneById      String?
+  doneAt        DateTime?
+
+  request     Request      @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId], references: [id])
+  doneBy      User?        @relation("doneBy", fields: [doneById], references: [id])
+}
+
+// ── Annuaire AD (lecture seule) ────────────────────────────────────────────
+
+model AdAccount {
+  id             String    @id @default(cuid())
+  samAccountName String    @unique
+  displayName    String?
+  email          String?
+  dn             String
+  ou             String?
+  enabled        Boolean   @default(true)
+  lastLogon      DateTime?
+  groups         String? // noms des groupes, séparés par des retours ligne
+  syncedAt       DateTime  @default(now())
+}
+
+// ── Paramétrage & audit ────────────────────────────────────────────────────
+
+model Setting {
+  key   String @id
+  value String // JSON
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  cible     String?
+  details   String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+}
