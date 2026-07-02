@@ -20,7 +20,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fr" className={`${geistSans.variable} h-full antialiased`}>
-      <body className="min-h-full font-sans">{children}</body>
+      {/* suppressHydrationWarning : les extensions navigateur (gestionnaires de
+          mots de passe, antivirus) modifient le DOM avant React — bénin */}
+      <body className="min-h-full font-sans" suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }
