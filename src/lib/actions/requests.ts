@@ -5,9 +5,17 @@ import { redirect } from "next/navigation";
 import { prisma } from "../db";
 import { requireUser } from "../session";
 import { audit } from "../audit";
-import { checkCompletion, createRequest, decide } from "../workflow";
+import {
+  checkCompletion,
+  createRequest,
+  decide,
+  launchRequest,
+  sendBack,
+  updateRequestCircuit,
+} from "../workflow";
 import type {
   AppDemandee,
+  CircuitStepInput,
   CreationPayload,
   DepartPayload,
   ModificationPayload,
@@ -175,16 +183,57 @@ export async function createDepartRequest(
   redirect(`/demandes/${request.id}`);
 }
 
+// ── Circuit en brouillon : enregistrer / lancer ────────────────────────────
+
+export async function updateCircuitAction(
+  requestId: string,
+  steps: CircuitStepInput[],
+): Promise<FormState> {
+  const user = await requireUser();
+  const result = await updateRequestCircuit(requestId, user, steps);
+  if (!result.ok) return { error: result.error };
+  revalidatePath(`/demandes/${requestId}`);
+  return { success: "Circuit enregistré." };
+}
+
+export async function launchRequestAction(
+  requestId: string,
+  steps: CircuitStepInput[],
+): Promise<FormState> {
+  const user = await requireUser();
+  const result = await launchRequest(requestId, user, steps);
+  if (!result.ok) return { error: result.error };
+  revalidatePath(`/demandes/${requestId}`);
+  revalidatePath("/demandes");
+  return { success: "Demande lancée dans le circuit." };
+}
+
 // ── Validation / refus ─────────────────────────────────────────────────────
 
 export async function decideAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser("VALIDATEUR");
+  // l'habilitation réelle est vérifiée par canDecide (valideur nommé ou par rôle,
+  // délégué d'absence, ou ADMIN) — quel que soit le rôle Sésame de l'utilisateur.
+  const user = await requireUser();
   const requestId = str(formData, "requestId");
-  const decision = str(formData, "decision") === "REFUSE" ? "REFUSE" : "APPROUVE";
+  const raw = str(formData, "decision");
   const commentaire = str(formData, "commentaire");
+
+  if (raw === "RENVOYE") {
+    const targetOrdre = Number(str(formData, "targetOrdre"));
+    if (!Number.isInteger(targetOrdre)) {
+      return { error: "Sélectionnez l'étape de renvoi." };
+    }
+    const result = await sendBack(requestId, user, targetOrdre, commentaire);
+    if (!result.ok) return { error: result.error };
+    revalidatePath(`/demandes/${requestId}`);
+    revalidatePath("/demandes");
+    return { success: "Demande renvoyée pour correction." };
+  }
+
+  const decision = raw === "REFUSE" ? "REFUSE" : "APPROUVE";
   if (decision === "REFUSE" && !commentaire) {
     return { error: "Un commentaire est obligatoire en cas de refus." };
   }
@@ -198,7 +247,15 @@ export async function decideAction(
 // ── Tâches de provisionnement ──────────────────────────────────────────────
 
 export async function setTaskStatut(taskId: string, statut: TaskStatut): Promise<void> {
-  const user = await requireUser("TECHNICIEN", "VALIDATEUR");
+  const user = await requireUser();
+  const existing = await prisma.provisionTask.findUnique({ where: { id: taskId } });
+  if (!existing) return;
+  // techniciens/valideurs/admin, ou le responsable désigné de la tâche
+  const allowed =
+    ["ADMIN", "TECHNICIEN", "VALIDATEUR"].includes(user.role) ||
+    existing.responsableId === user.id;
+  if (!allowed) return;
+
   const task = await prisma.provisionTask.update({
     where: { id: taskId },
     data: {
@@ -210,6 +267,7 @@ export async function setTaskStatut(taskId: string, statut: TaskStatut): Promise
   await checkCompletion(task.requestId);
   revalidatePath(`/demandes/${task.requestId}`);
   revalidatePath("/demandes");
+  revalidatePath("/taches");
 }
 
 // ── Annulation ─────────────────────────────────────────────────────────────
@@ -217,7 +275,7 @@ export async function setTaskStatut(taskId: string, statut: TaskStatut): Promise
 export async function cancelRequest(requestId: string): Promise<void> {
   const user = await requireUser();
   const request = await prisma.request.findUnique({ where: { id: requestId } });
-  if (!request || request.statut !== "EN_VALIDATION") return;
+  if (!request || !["BROUILLON", "EN_VALIDATION"].includes(request.statut)) return;
   if (request.requesterId !== user.id && user.role !== "ADMIN") return;
   await prisma.request.update({
     where: { id: requestId },

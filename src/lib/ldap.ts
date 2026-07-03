@@ -185,6 +185,7 @@ export type AdEntry = {
   enabled: boolean;
   lastLogon: Date | null;
   groups: string;
+  manager: string | null;
 };
 
 /** Lit tous les comptes utilisateurs de l'AD (lecture seule). */
@@ -205,6 +206,7 @@ export async function ldapFetchAccounts(cfg: LdapSettings): Promise<AdEntry[]> {
         "userAccountControl",
         "memberOf",
         "lastLogonTimestamp",
+        "manager",
       ],
       paged: { pageSize: 500 },
     });
@@ -221,6 +223,7 @@ export async function ldapFetchAccounts(cfg: LdapSettings): Promise<AdEntry[]> {
           enabled: (uac & 2) === 0,
           lastLogon: fileTimeToDate(attr(e, "lastLogonTimestamp")),
           groups: attrAll(e, "memberOf").map(cnFromDn).sort().join("\n"),
+          manager: attr(e, "manager") ?? null,
         };
       });
   } finally {

@@ -1,19 +1,24 @@
 import { notFound, redirect } from "next/navigation";
-import { Ban, CircleCheck, CircleDashed, CircleDot, CircleX } from "lucide-react";
+import { Ban } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { canDecide } from "@/lib/workflow";
+import { managedAgentIds } from "@/lib/responsibility";
 import { cancelRequest } from "@/lib/actions/requests";
 import { Badge, Card, PageHeader, btnDanger } from "@/components/ui";
 import { DecideBox } from "@/components/decide-box";
+import { CircuitTree, type TreeStep } from "@/components/circuit-tree";
+import { RequestCircuitEditor } from "@/components/request-circuit-editor";
 import { TaskList, type TaskDto } from "@/components/task-list";
 import {
   REQUEST_STATUT_COLORS,
   REQUEST_STATUT_LABELS,
   REQUEST_TYPE_LABELS,
+  ROLE_LABELS,
   fmtDate,
   fmtDateTime,
   requestObjet,
+  type CircuitStepInput,
   type CreationPayload,
   type DepartPayload,
   type ModificationPayload,
@@ -81,24 +86,89 @@ export default async function DemandeDetailPage({
     include: {
       requester: true,
       agent: true,
-      workflow: { include: { steps: { orderBy: { ordre: "asc" } } } },
+      workflow: { select: { nom: true } },
+      steps: { orderBy: { ordre: "asc" } },
       validations: { include: { user: true }, orderBy: { createdAt: "asc" } },
       tasks: { include: { doneBy: true }, orderBy: { id: "asc" } },
     },
   });
   if (!request) notFound();
-  // un demandeur ne voit que ses propres demandes
+  // un demandeur voit ses demandes + celles concernant les agents sous sa
+  // responsabilité (attribut manager de l'AD)
   if (user.role === "DEMANDEUR" && request.requesterId !== user.id) {
-    redirect("/demandes");
+    const managed = await managedAgentIds(user);
+    if (!request.agentId || !managed.includes(request.agentId)) {
+      redirect("/demandes");
+    }
   }
 
-  const steps = request.workflow?.steps ?? [];
+  const steps = request.steps;
   const userCanDecide = await canDecide(request, user);
   const currentStep = steps.find((s) => s.ordre === request.currentStepOrdre);
+  // étapes antérieures (destinations possibles d'un renvoi)
+  const previousSteps = steps
+    .filter((s) => s.ordre < request.currentStepOrdre)
+    .map((s) => ({ ordre: s.ordre, nom: s.nom }));
   const canCancel =
-    request.statut === "EN_VALIDATION" &&
+    ["BROUILLON", "EN_VALIDATION"].includes(request.statut) &&
     (request.requesterId === user.id || user.role === "ADMIN");
   const canEditTasks = ["ADMIN", "TECHNICIEN", "VALIDATEUR"].includes(user.role);
+
+  // circuit en brouillon : le demandeur confirme/modifie puis lance
+  const isBrouillon = request.statut === "BROUILLON";
+  const canEditCircuit =
+    isBrouillon && (request.requesterId === user.id || user.role === "ADMIN");
+
+  // résolution des noms de valideurs pour l'arbre et l'éditeur
+  const users = await prisma.user.findMany({
+    where: { active: true },
+    select: { id: true, displayName: true },
+    orderBy: { displayName: "asc" },
+  });
+  const userName = new Map(users.map((u) => [u.id, u.displayName]));
+  const validatorsOf = (s: (typeof steps)[number]): string[] => {
+    const ids = (s.validatorUserIds ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    if (ids.length) return ids.map((idv) => userName.get(idv) ?? "utilisateur inconnu");
+    if (s.validatorRole) return [`${ROLE_LABELS[s.validatorRole]} (par rôle)`];
+    return [];
+  };
+  const treeSteps: TreeStep[] = steps.map((s) => {
+    const decided = [...request.validations]
+      .reverse()
+      .find((v) => v.stepOrdre === s.ordre && v.decision !== "RENVOYE");
+    const isCurrent =
+      request.statut === "EN_VALIDATION" && s.ordre === request.currentStepOrdre;
+    const state: TreeStep["state"] =
+      decided?.decision === "APPROUVE"
+        ? "done"
+        : decided?.decision === "REFUSE"
+          ? "refused"
+          : isCurrent
+            ? "current"
+            : "todo";
+    return {
+      ordre: s.ordre,
+      nom: s.nom,
+      mode: s.mode,
+      requis: s.requis,
+      approvals: request.validations.filter(
+        (v) => v.stepOrdre === s.ordre && v.decision === "APPROUVE",
+      ).length,
+      validators: validatorsOf(s),
+      state,
+      note: decided
+        ? `${decided.decision === "APPROUVE" ? "Validée" : "Refusée"} par ${decided.user.displayName} · ${fmtDateTime(decided.createdAt)}`
+        : undefined,
+      comment: decided?.commentaire ?? null,
+    };
+  });
+  const initialSteps: CircuitStepInput[] = steps.map((s) => ({
+    nom: s.nom,
+    mode: s.mode,
+    requis: s.requis,
+    validatorRole: s.validatorRole ?? null,
+    validatorUserIds: s.validatorUserIds ?? undefined,
+  }));
 
   const taskDtos: TaskDto[] = request.tasks.map((t) => ({
     id: t.id,
@@ -227,65 +297,33 @@ export default async function DemandeDetailPage({
                 : "Circuit de validation"
             }
           >
-            {steps.length === 0 ? (
-              <p className="text-sm text-slate-400">
-                Aucun circuit applicable : approbation immédiate.
+            {isBrouillon && (
+              <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">
+                Circuit par défaut proposé. Ajustez-le si besoin, puis lancez la
+                demande — les valideurs seront alors notifiés.
               </p>
-            ) : (
-              <ol className="space-y-4">
-                {steps.map((step) => {
-                  const validation = request.validations.find(
-                    (v) => v.stepOrdre === step.ordre,
-                  );
-                  const isCurrent =
-                    request.statut === "EN_VALIDATION" &&
-                    step.ordre === request.currentStepOrdre;
-                  return (
-                    <li key={step.id} className="flex gap-3">
-                      <span className="mt-0.5">
-                        {validation?.decision === "APPROUVE" ? (
-                          <CircleCheck className="h-5 w-5 text-emerald-500" />
-                        ) : validation?.decision === "REFUSE" ? (
-                          <CircleX className="h-5 w-5 text-red-500" />
-                        ) : isCurrent ? (
-                          <CircleDot className="h-5 w-5 text-amber-500" />
-                        ) : (
-                          <CircleDashed className="h-5 w-5 text-slate-300" />
-                        )}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium">{step.nom}</p>
-                        {validation ? (
-                          <>
-                            <p className="text-xs text-slate-500">
-                              {validation.decision === "APPROUVE" ? "Validée" : "Refusée"} par{" "}
-                              {validation.user.displayName} ·{" "}
-                              {fmtDateTime(validation.createdAt)}
-                            </p>
-                            {validation.commentaire && (
-                              <p className="mt-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs italic text-slate-500">
-                                « {validation.commentaire} »
-                              </p>
-                            )}
-                          </>
-                        ) : (
-                          <p className="text-xs text-slate-400">
-                            {isCurrent ? "En attente de validation" : "À venir"}
-                          </p>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
+            )}
+            <CircuitTree steps={treeSteps} />
+            {canEditCircuit && (
+              <div className="mt-4 border-t border-slate-100 pt-4">
+                <RequestCircuitEditor
+                  requestId={request.id}
+                  initialSteps={initialSteps}
+                  users={users}
+                />
+              </div>
             )}
           </Card>
 
           {userCanDecide && currentStep && (
-            <DecideBox requestId={request.id} stepNom={currentStep.nom} />
+            <DecideBox
+              requestId={request.id}
+              stepNom={currentStep.nom}
+              previousSteps={previousSteps}
+            />
           )}
           {userCanDecide && !currentStep && request.statut === "EN_VALIDATION" && (
-            <DecideBox requestId={request.id} stepNom="Validation" />
+            <DecideBox requestId={request.id} stepNom="Validation" previousSteps={[]} />
           )}
         </div>
       </div>

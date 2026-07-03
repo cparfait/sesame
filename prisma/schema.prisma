@@ -28,10 +28,38 @@ model User {
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  requests    Request[]           @relation("requester")
-  validations RequestValidation[]
-  tasksDone   ProvisionTask[]     @relation("doneBy")
-  auditLogs   AuditLog[]
+  // délégation d'absence : les validations dues à cet utilisateur sont aussi
+  // proposées au délégué pendant la fenêtre d'absence.
+  absent        Boolean   @default(false)
+  delegateToId  String?
+  delegateFrom  DateTime?
+  delegateTo    DateTime?
+  delegateTo_   User?     @relation("delegation", fields: [delegateToId], references: [id], onDelete: SetNull)
+  delegatesFor  User[]    @relation("delegation")
+
+  requests         Request[]           @relation("requester")
+  validations      RequestValidation[]
+  tasksDone        ProvisionTask[]     @relation("doneBy")
+  tasksResponsable ProvisionTask[]     @relation("taskResponsable")
+  auditLogs        AuditLog[]
+  equipementsResponsable Equipement[]  @relation("equipementResponsable")
+  magicTokens      MagicToken[]
+}
+
+// Jeton de connexion sans mot de passe (magic link envoyé par mail), à usage
+// unique et à durée limitée.
+model MagicToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  next      String? // chemin de redirection après connexion
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ── Référentiel agents ─────────────────────────────────────────────────────
@@ -84,6 +112,56 @@ model Application {
 
   accesses AgentAccess[]
   tasks    ProvisionTask[]
+  services ServiceApplication[]
+}
+
+// ── Services (catalogue) ───────────────────────────────────────────────────
+// Un service correspond au service d'affectation de l'agent. On y rattache
+// les applications métiers proposées à la demande et, au plus, un circuit de
+// validation par type de demande (création / modification / départ).
+
+model Service {
+  id          String   @id @default(cuid())
+  nom         String   @unique
+  description String?
+  actif       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  workflowCreationId     String?
+  workflowModificationId String?
+  workflowDepartId       String?
+  workflowCreation     Workflow? @relation("ServiceCreation", fields: [workflowCreationId], references: [id], onDelete: SetNull)
+  workflowModification Workflow? @relation("ServiceModification", fields: [workflowModificationId], references: [id], onDelete: SetNull)
+  workflowDepart       Workflow? @relation("ServiceDepart", fields: [workflowDepartId], references: [id], onDelete: SetNull)
+
+  applications ServiceApplication[]
+}
+
+model ServiceApplication {
+  serviceId     String
+  applicationId String
+
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, applicationId])
+  @@index([applicationId])
+}
+
+// ── Équipements (catalogue) ────────────────────────────────────────────────
+// Matériel proposé à la création d'un agent, avec un responsable (utilisateur
+// Sésame) chargé de sa préparation.
+
+model Equipement {
+  id            String   @id @default(cuid())
+  nom           String   @unique
+  responsableId String?
+  actif         Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  responsable User? @relation("equipementResponsable", fields: [responsableId], references: [id], onDelete: SetNull)
+
+  @@index([responsableId])
 }
 
 enum AccessStatut {
@@ -118,6 +196,7 @@ enum RequestType {
 }
 
 enum RequestStatut {
+  BROUILLON // circuit à confirmer par le demandeur avant lancement
   EN_VALIDATION
   APPROUVEE // validée, en cours de provisionnement
   REFUSEE
@@ -138,6 +217,11 @@ model Workflow {
 
   steps    WorkflowStep[]
   requests Request[]
+
+  // services qui rattachent ce circuit (au plus un circuit par type et par service)
+  servicesCreation     Service[] @relation("ServiceCreation")
+  servicesModification Service[] @relation("ServiceModification")
+  servicesDepart       Service[] @relation("ServiceDepart")
 }
 
 model WorkflowStep {
@@ -160,7 +244,7 @@ model Request {
   statut          RequestStatut @default(EN_VALIDATION)
   requesterId     String
   agentId         String? // agent concerné (modification / départ)
-  workflowId      String? // circuit retenu à la création de la demande
+  workflowId      String? // circuit modèle d'origine (référence ; les étapes sont figées)
   payload         Json // fiche complète de la demande
   currentStepOrdre Int          @default(1)
   createdAt       DateTime      @default(now())
@@ -170,15 +254,40 @@ model Request {
   requester   User                @relation("requester", fields: [requesterId], references: [id])
   agent       Agent?              @relation(fields: [agentId], references: [id])
   workflow    Workflow?           @relation(fields: [workflowId], references: [id], onDelete: SetNull)
+  steps       RequestStep[]
   validations RequestValidation[]
   tasks       ProvisionTask[]
 
   @@index([statut])
 }
 
+enum StepMode {
+  SEQUENTIEL // un seul valideur suffit pour avancer
+  PARALLELE // plusieurs valideurs sollicités ; « requis » validations nécessaires
+}
+
+// Étapes figées (snapshot) du circuit sur la demande : préserve l'historique si
+// le modèle change et permet l'édition du circuit au dépôt (ajout / retrait /
+// réordonnancement / remplacement de valideurs).
+model RequestStep {
+  id               String   @id @default(cuid())
+  requestId        String
+  ordre            Int
+  nom              String
+  mode             StepMode @default(SEQUENTIEL)
+  requis           Int      @default(1)
+  validatorRole    Role?
+  validatorUserIds String? // liste d'ids utilisateurs, séparés par des virgules
+
+  request Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, ordre])
+}
+
 enum Decision {
   APPROUVE
   REFUSE
+  RENVOYE // renvoi à une étape précédente pour correction
 }
 
 model RequestValidation {
@@ -187,6 +296,7 @@ model RequestValidation {
   stepOrdre   Int
   stepNom     String
   decision    Decision
+  targetOrdre Int? // en cas de renvoi : étape de destination
   userId      String
   commentaire String?
   createdAt   DateTime @default(now())
@@ -207,13 +317,17 @@ model ProvisionTask {
   label         String
   categorie     String // AD, Messagerie, Application, Matériel, Autre
   applicationId String?
+  responsableId String? // utilisateur en charge (ex. responsable d'un équipement)
   statut        TaskStatut @default(A_FAIRE)
   doneById      String?
   doneAt        DateTime?
 
   request     Request      @relation(fields: [requestId], references: [id], onDelete: Cascade)
   application Application? @relation(fields: [applicationId], references: [id])
+  responsable User?        @relation("taskResponsable", fields: [responsableId], references: [id])
   doneBy      User?        @relation("doneBy", fields: [doneById], references: [id])
+
+  @@index([responsableId])
 }
 
 // ── Annuaire AD (lecture seule) ────────────────────────────────────────────
@@ -228,7 +342,10 @@ model AdAccount {
   enabled        Boolean   @default(true)
   lastLogon      DateTime?
   groups         String? // noms des groupes, séparés par des retours ligne
+  manager        String? // DN du responsable hiérarchique (attribut AD « manager »)
   syncedAt       DateTime  @default(now())
+
+  @@index([manager])
 }
 
 // ── Paramétrage & audit ────────────────────────────────────────────────────

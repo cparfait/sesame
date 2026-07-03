@@ -22,6 +22,7 @@ export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
 };
 
 export const REQUEST_STATUT_LABELS: Record<RequestStatut, string> = {
+  BROUILLON: "Brouillon — circuit à lancer",
   EN_VALIDATION: "En validation",
   APPROUVEE: "Approuvée — provisionnement",
   REFUSEE: "Refusée",
@@ -30,6 +31,7 @@ export const REQUEST_STATUT_LABELS: Record<RequestStatut, string> = {
 };
 
 export const REQUEST_STATUT_COLORS: Record<RequestStatut, string> = {
+  BROUILLON: "bg-slate-100 text-slate-600 ring-slate-500/20",
   EN_VALIDATION: "bg-amber-50 text-amber-700 ring-amber-600/20",
   APPROUVEE: "bg-blue-50 text-blue-700 ring-blue-600/20",
   REFUSEE: "bg-red-50 text-red-700 ring-red-600/20",
@@ -83,16 +85,6 @@ export const TELETRAVAIL_OPTIONS = [
   "Ponctuel",
 ];
 
-export const EQUIPEMENTS = [
-  "Poste informatique fixe",
-  "Ordinateur portable",
-  "Téléphone fixe",
-  "Téléphone mobile",
-  "Badge d'accès",
-  "Code copieur / impression",
-  "Clés / accès aux locaux",
-];
-
 export function fmtDate(d: Date | string | null | undefined): string {
   if (!d) return "—";
   return new Date(d).toLocaleDateString("fr-FR");
@@ -115,6 +107,22 @@ export function requestObjet(
   if (type === "CREATION") return `${p.prenom ?? ""} ${p.nom ?? ""}`.trim() || "—";
   return String(p.agentNom ?? "—");
 }
+
+// ── Circuit de validation (édition au dépôt) ──────────────────────────────
+
+/** Une étape de circuit telle que résolue puis éventuellement éditée au dépôt. */
+export type CircuitStepInput = {
+  nom: string;
+  mode: "SEQUENTIEL" | "PARALLELE";
+  requis: number; // nombre de validations requises (mode parallèle)
+  validatorRole?: string | null;
+  validatorUserIds?: string; // ids utilisateurs séparés par des virgules
+};
+
+export const STEP_MODE_LABELS: Record<"SEQUENTIEL" | "PARALLELE", string> = {
+  SEQUENTIEL: "Séquentiel (un valideur suffit)",
+  PARALLELE: "Parallèle (plusieurs valideurs)",
+};
 
 // ── Types des fiches de demande (payload JSON) ────────────────────────────
 

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   AppWindow,
+  CalendarClock,
+  CheckSquare,
   ClipboardList,
   KeyRound,
   LayoutDashboard,
@@ -16,12 +18,23 @@ import type { Role } from "@prisma/client";
 
 // DEMANDEUR : vue simplifiée — uniquement ses demandes
 const items = [
-  { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
+  {
+    href: "/",
+    label: "Tableau de bord",
+    icon: LayoutDashboard,
+    roles: ["ADMIN", "VALIDATEUR", "TECHNICIEN", "LECTEUR"],
+  },
   {
     href: "/demandes",
     label: "Demandes",
     labelDemandeur: "Mes demandes",
     icon: ClipboardList,
+  },
+  {
+    href: "/taches",
+    label: "Mes tâches",
+    icon: CheckSquare,
+    roles: ["ADMIN", "VALIDATEUR", "TECHNICIEN"],
   },
   {
     href: "/agents",
@@ -41,12 +54,23 @@ const items = [
     icon: Network,
     roles: ["ADMIN", "VALIDATEUR", "TECHNICIEN", "LECTEUR"],
   },
+  {
+    href: "/absences",
+    label: "Mes absences",
+    icon: CalendarClock,
+    roles: ["ADMIN", "VALIDATEUR", "TECHNICIEN"],
+  },
   { href: "/journal", label: "Journal", icon: ScrollText, roles: ["ADMIN"] },
   { href: "/parametres", label: "Paramètres", icon: Settings, roles: ["ADMIN"] },
 ];
 
-export function Sidebar({ role }: { role: Role }) {
+export function Sidebar({ role, hasTasks }: { role: Role; hasTasks?: boolean }) {
   const pathname = usePathname();
+  const visible = items.filter((i) => {
+    if (!i.roles || i.roles.includes(role)) return true;
+    // un demandeur responsable d'une tâche voit aussi « Mes tâches »
+    return i.href === "/taches" && role === "DEMANDEUR" && !!hasTasks;
+  });
   return (
     <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
       <div className="flex h-14 items-center gap-2.5 border-b border-slate-100 px-5">
@@ -56,9 +80,7 @@ export function Sidebar({ role }: { role: Role }) {
         <span className="text-lg font-semibold tracking-tight">Sésame</span>
       </div>
       <nav className="flex-1 space-y-0.5 p-3">
-        {items
-          .filter((i) => !i.roles || i.roles.includes(role))
-          .map((item) => {
+        {visible.map((item) => {
             const active =
               item.href === "/"
                 ? pathname === "/"

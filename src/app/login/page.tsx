@@ -3,9 +3,14 @@ import { redirect } from "next/navigation";
 import { currentUser } from "@/lib/session";
 import { LoginForm } from "./login-form";
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const user = await currentUser();
   if (user) redirect("/");
+  const { error } = await searchParams;
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
       <div className="w-full max-w-sm">
@@ -20,6 +25,11 @@ export default async function LoginPage() {
             </p>
           </div>
         </div>
+        {error === "magic" && (
+          <p className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-center text-sm text-amber-700">
+            Ce lien de connexion est invalide ou expiré. Connectez-vous ci-dessous.
+          </p>
+        )}
         <LoginForm />
         <p className="mt-6 text-center text-xs text-slate-400">
           Connectez-vous avec votre identifiant Windows habituel.

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   AlertTriangle,
   CalendarClock,
@@ -27,73 +28,11 @@ import {
 export default async function DashboardPage() {
   const user = await requireUser();
 
-  // Vue simplifiée pour les demandeurs : déposer et suivre leurs demandes
+  // Vue simplifiée pour les demandeurs : ils arrivent directement sur le choix
+  // du type de demande (création / modification / départ) ; leur historique est
+  // accessible depuis le menu « Mes demandes ».
   if (user.role === "DEMANDEUR") {
-    const mesDemandes = await prisma.request.findMany({
-      where: { requesterId: user.id },
-      orderBy: { numero: "desc" },
-      take: 15,
-      include: { tasks: true },
-    });
-    const enCours = mesDemandes.filter(
-      (r) => r.statut === "EN_VALIDATION" || r.statut === "APPROUVEE",
-    ).length;
-    return (
-      <>
-        <PageHeader
-          title={`Bonjour ${user.displayName.split(" ")[0]}`}
-          subtitle="Déposez et suivez vos demandes de création, modification ou départ"
-        >
-          <Link href="/demandes/nouvelle" className={btnPrimary}>
-            <Plus className="h-4 w-4" /> Nouvelle demande
-          </Link>
-        </PageHeader>
-        <Card
-          title={`Mes demandes${enCours > 0 ? ` — ${enCours} en cours` : ""}`}
-        >
-          {mesDemandes.length === 0 ? (
-            <EmptyState
-              title="Vous n'avez pas encore déposé de demande"
-              hint="Cliquez sur « Nouvelle demande » pour commencer."
-            />
-          ) : (
-            <table className="w-full text-sm">
-              <tbody className="divide-y divide-slate-100">
-                {mesDemandes.map((r) => {
-                  const done = r.tasks.filter((t) => t.statut !== "A_FAIRE").length;
-                  return (
-                    <tr key={r.id} className="group">
-                      <td className="py-2.5 pr-3 font-medium tabular-nums text-slate-400">
-                        n° {r.numero}
-                      </td>
-                      <td className="py-2.5 pr-3">
-                        <Link
-                          href={`/demandes/${r.id}`}
-                          className="font-medium text-slate-900 group-hover:text-indigo-600"
-                        >
-                          {requestObjet(r.type, r.payload)}
-                        </Link>
-                        <p className="text-xs text-slate-400">
-                          {REQUEST_TYPE_LABELS[r.type]} · {fmtDate(r.createdAt)}
-                          {r.tasks.length > 0 &&
-                            r.statut === "APPROUVEE" &&
-                            ` · ${done}/${r.tasks.length} tâches DSI`}
-                        </p>
-                      </td>
-                      <td className="py-2.5 text-right">
-                        <Badge color={REQUEST_STATUT_COLORS[r.statut]}>
-                          {REQUEST_STATUT_LABELS[r.statut]}
-                        </Badge>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </Card>
-      </>
-    );
+    redirect("/demandes/nouvelle");
   }
 
   const in30d = new Date();

@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import type { RequestStatut, RequestType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { managedAgentIds } from "@/lib/responsibility";
 import { Badge, EmptyState, PageHeader, btnPrimary } from "@/components/ui";
 import {
   REQUEST_STATUT_COLORS,
@@ -29,10 +30,19 @@ export default async function DemandesPage({
     ? (params.type as RequestType)
     : undefined;
 
-  // un demandeur ne voit que ses propres demandes
+  // un demandeur voit ses propres demandes + celles concernant les agents dont
+  // il est le responsable hiérarchique (attribut manager de l'AD)
   const isDemandeur = user.role === "DEMANDEUR";
+  let scope = {};
+  if (isDemandeur) {
+    const managed = await managedAgentIds(user);
+    scope =
+      managed.length > 0
+        ? { OR: [{ requesterId: user.id }, { agentId: { in: managed } }] }
+        : { requesterId: user.id };
+  }
   const demandes = await prisma.request.findMany({
-    where: { statut, type, ...(isDemandeur && { requesterId: user.id }) },
+    where: { statut, type, ...scope },
     orderBy: { numero: "desc" },
     take: 200,
     include: { requester: true, tasks: true },
@@ -56,7 +66,11 @@ export default async function DemandesPage({
     <>
       <PageHeader
         title={isDemandeur ? "Mes demandes" : "Demandes"}
-        subtitle="Créations, modifications et départs — suivis de bout en bout"
+        subtitle={
+          isDemandeur
+            ? "Vos demandes et celles des agents sous votre responsabilité"
+            : "Créations, modifications et départs — suivis de bout en bout"
+        }
       >
         {user.role !== "LECTEUR" && (
           <Link href="/demandes/nouvelle" className={btnPrimary}>

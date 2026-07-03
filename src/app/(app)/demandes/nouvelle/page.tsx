@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { UserMinus, UserPen, UserPlus } from "lucide-react";
 import type { RequestType } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -11,6 +12,8 @@ import {
   type AgentDto,
   type AccessDto,
   type ApplicationDto,
+  type EquipementDto,
+  type ServiceDto,
 } from "@/components/request-forms";
 
 const TYPE_CARDS: { type: RequestType; label: string; desc: string; icon: typeof UserPlus }[] = [
@@ -41,53 +44,97 @@ export default async function NouvelleDemandePage({
 }) {
   await requireUser("DEMANDEUR", "VALIDATEUR", "TECHNICIEN");
   const params = await searchParams;
-  const type: RequestType = ["CREATION", "MODIFICATION", "DEPART"].includes(
+  const type: RequestType | null = ["CREATION", "MODIFICATION", "DEPART"].includes(
     params.type ?? "",
   )
     ? (params.type as RequestType)
-    : "CREATION";
+    : null;
 
-  const [applicationsRaw, agentsRaw] = await Promise.all([
-    prisma.application.findMany({ where: { actif: true }, orderBy: { nom: "asc" } }),
-    prisma.agent.findMany({
-      where: { statut: "ACTIF" },
-      orderBy: [{ nom: "asc" }, { prenom: "asc" }],
-    }),
-  ]);
-  const applications: ApplicationDto[] = applicationsRaw.map((a) => ({
-    id: a.id,
-    nom: a.nom,
-    profils: a.profils,
-  }));
-  const agents: AgentDto[] = agentsRaw.map((a) => ({
-    id: a.id,
-    nom: a.nom,
-    prenom: a.prenom,
-    service: a.service,
-    email: a.email,
-    telephone: a.telephone,
-    statutEmploi: a.statutEmploi,
-    direction: a.direction,
-    fonction: a.fonction,
-    site: a.site,
-    responsable: a.responsable,
-    teletravail: a.teletravail,
-    dateFinContrat: a.dateFinContrat?.toISOString().slice(0, 10) ?? null,
-  }));
+  // Les données et le formulaire ne sont chargés qu'une fois un type choisi :
+  // à l'arrivée, on ne présente que les trois choix.
+  let form: ReactNode = null;
+  if (type) {
+    const [applicationsRaw, agentsRaw, servicesRaw, equipementsRaw] =
+      await Promise.all([
+        prisma.application.findMany({ where: { actif: true }, orderBy: { nom: "asc" } }),
+        prisma.agent.findMany({
+          where: { statut: "ACTIF" },
+          orderBy: [{ nom: "asc" }, { prenom: "asc" }],
+        }),
+        prisma.service.findMany({
+          where: { actif: true },
+          orderBy: { nom: "asc" },
+          include: { applications: { select: { applicationId: true } } },
+        }),
+        prisma.equipement.findMany({
+          where: { actif: true },
+          orderBy: { nom: "asc" },
+          select: { nom: true },
+        }),
+      ]);
+    const equipements: EquipementDto[] = equipementsRaw.map((e) => ({ nom: e.nom }));
+    const applications: ApplicationDto[] = applicationsRaw.map((a) => ({
+      id: a.id,
+      nom: a.nom,
+      profils: a.profils,
+    }));
+    const services: ServiceDto[] = servicesRaw.map((s) => ({
+      id: s.id,
+      nom: s.nom,
+      applicationIds: s.applications.map((a) => a.applicationId),
+    }));
+    const agents: AgentDto[] = agentsRaw.map((a) => ({
+      id: a.id,
+      nom: a.nom,
+      prenom: a.prenom,
+      service: a.service,
+      email: a.email,
+      telephone: a.telephone,
+      statutEmploi: a.statutEmploi,
+      direction: a.direction,
+      fonction: a.fonction,
+      site: a.site,
+      responsable: a.responsable,
+      teletravail: a.teletravail,
+      dateFinContrat: a.dateFinContrat?.toISOString().slice(0, 10) ?? null,
+    }));
 
-  let agent: AgentDto | null = null;
-  let accesses: AccessDto[] = [];
-  if (params.agentId && type !== "CREATION") {
-    agent = agents.find((a) => a.id === params.agentId) ?? null;
-    if (agent) {
-      const rows = await prisma.agentAccess.findMany({
-        where: { agentId: agent.id, statut: "ACTIF" },
-        include: { application: true },
-      });
-      accesses = rows.map((r) => ({
-        id: r.id,
-        label: `${r.application.nom}${r.profil ? ` (${r.profil})` : ""}`,
-      }));
+    let agent: AgentDto | null = null;
+    let accesses: AccessDto[] = [];
+    if (params.agentId && type !== "CREATION") {
+      agent = agents.find((a) => a.id === params.agentId) ?? null;
+      if (agent) {
+        const rows = await prisma.agentAccess.findMany({
+          where: { agentId: agent.id, statut: "ACTIF" },
+          include: { application: true },
+        });
+        accesses = rows.map((r) => ({
+          id: r.id,
+          label: `${r.application.nom}${r.profil ? ` (${r.profil})` : ""}`,
+        }));
+      }
+    }
+
+    if (type === "CREATION") {
+      form = (
+        <CreationForm
+          applications={applications}
+          services={services}
+          equipements={equipements}
+        />
+      );
+    } else if (type === "MODIFICATION") {
+      form = (
+        <ModificationForm
+          agents={agents}
+          applications={applications}
+          services={services}
+          agent={agent}
+          accesses={accesses}
+        />
+      );
+    } else {
+      form = <DepartForm agents={agents} agent={agent} accesses={accesses} />;
     }
   }
 
@@ -95,7 +142,11 @@ export default async function NouvelleDemandePage({
     <>
       <PageHeader
         title="Nouvelle demande"
-        subtitle="La demande suivra le circuit de validation paramétré pour son type"
+        subtitle={
+          type
+            ? "La demande suivra le circuit de validation paramétré pour son type"
+            : "Choisissez le type de demande à déposer"
+        }
       />
 
       <div className="mb-6 grid gap-3 sm:grid-cols-3">
@@ -112,9 +163,7 @@ export default async function NouvelleDemandePage({
                   : "border-slate-200 bg-white hover:border-indigo-200"
               }`}
             >
-              <Icon
-                className={`h-5 w-5 ${active ? "text-indigo-600" : "text-slate-400"}`}
-              />
+              <Icon className={`h-5 w-5 ${active ? "text-indigo-600" : "text-slate-400"}`} />
               <p className="mt-2 text-sm font-semibold">{c.label}</p>
               <p className="text-xs text-slate-500">{c.desc}</p>
             </Link>
@@ -122,18 +171,7 @@ export default async function NouvelleDemandePage({
         })}
       </div>
 
-      {type === "CREATION" && <CreationForm applications={applications} />}
-      {type === "MODIFICATION" && (
-        <ModificationForm
-          agents={agents}
-          applications={applications}
-          agent={agent}
-          accesses={accesses}
-        />
-      )}
-      {type === "DEPART" && (
-        <DepartForm agents={agents} agent={agent} accesses={accesses} />
-      )}
+      {form}
     </>
   );
 }

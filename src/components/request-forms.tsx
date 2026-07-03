@@ -1,22 +1,19 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createCreationRequest,
   createDepartRequest,
   createModificationRequest,
 } from "@/lib/actions/requests";
-import {
-  CIVILITES,
-  EQUIPEMENTS,
-  STATUTS_EMPLOI,
-  TELETRAVAIL_OPTIONS,
-} from "@/lib/constants";
+import { CIVILITES, STATUTS_EMPLOI, TELETRAVAIL_OPTIONS } from "@/lib/constants";
 import { Alert, Card, Field, Input, Select, Textarea } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 
 export type ApplicationDto = { id: string; nom: string; profils: string | null };
+export type ServiceDto = { id: string; nom: string; applicationIds: string[] };
+export type EquipementDto = { nom: string };
 export type AgentDto = {
   id: string;
   nom: string;
@@ -132,8 +129,22 @@ function AgentSelect({
 
 // ── Création ───────────────────────────────────────────────────────────────
 
-export function CreationForm({ applications }: { applications: ApplicationDto[] }) {
+export function CreationForm({
+  applications,
+  services,
+  equipements,
+}: {
+  applications: ApplicationDto[];
+  services: ServiceDto[];
+  equipements: EquipementDto[];
+}) {
   const [state, action] = useActionState(createCreationRequest, null);
+  const [service, setService] = useState("");
+  const catalog = services.length > 0;
+  const selected = services.find((s) => s.nom === service);
+  const filteredApps = catalog
+    ? applications.filter((a) => selected?.applicationIds.includes(a.id))
+    : applications;
   return (
     <form action={action} className="space-y-5">
       <Alert state={state} />
@@ -181,8 +192,26 @@ export function CreationForm({ applications }: { applications: ApplicationDto[] 
           <Field label="Direction">
             <Input name="direction" placeholder="ex. Direction des services techniques" />
           </Field>
-          <Field label="Service">
-            <Input name="service" placeholder="ex. Espaces verts" />
+          <Field label="Service" required={catalog}>
+            {catalog ? (
+              <Select
+                name="service"
+                required
+                value={service}
+                onChange={(e) => setService(e.target.value)}
+              >
+                <option value="" disabled>
+                  Choisir un service…
+                </option>
+                {services.map((s) => (
+                  <option key={s.id} value={s.nom}>
+                    {s.nom}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <Input name="service" placeholder="ex. Espaces verts" />
+            )}
           </Field>
           <Field label="Fonction / poste">
             <Input name="fonction" placeholder="ex. Gestionnaire carrière-paie" />
@@ -223,26 +252,38 @@ export function CreationForm({ applications }: { applications: ApplicationDto[] 
       </Card>
 
       <Card title="Accès aux applications">
-        <AppPicker applications={applications} legend="Applications à ouvrir" />
+        {catalog && !service ? (
+          <p className="text-sm text-slate-400">
+            Choisissez d&apos;abord un service pour voir les logiciels associés.
+          </p>
+        ) : (
+          <AppPicker applications={filteredApps} legend="Applications à ouvrir" />
+        )}
       </Card>
 
       <Card title="Équipements à prévoir">
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {EQUIPEMENTS.map((e) => (
-            <label
-              key={e}
-              className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            >
-              <input
-                type="checkbox"
-                name="equipements"
-                value={e}
-                className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
-              />
-              {e}
-            </label>
-          ))}
-        </div>
+        {equipements.length === 0 ? (
+          <p className="text-sm text-slate-400">
+            Aucun équipement déclaré (menu Paramètres → Équipements).
+          </p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {equipements.map((e) => (
+              <label
+                key={e.nom}
+                className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  name="equipements"
+                  value={e.nom}
+                  className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+                />
+                {e.nom}
+              </label>
+            ))}
+          </div>
+        )}
       </Card>
 
       <Card>
@@ -263,15 +304,16 @@ export function CreationForm({ applications }: { applications: ApplicationDto[] 
 export function ModificationForm({
   agents,
   applications,
+  services,
   agent,
   accesses,
 }: {
   agents: AgentDto[];
   applications: ApplicationDto[];
+  services: ServiceDto[];
   agent: AgentDto | null;
   accesses: AccessDto[];
 }) {
-  const [state, action] = useActionState(createModificationRequest, null);
   return (
     <div className="space-y-5">
       <Card>
@@ -279,6 +321,42 @@ export function ModificationForm({
       </Card>
 
       {agent && (
+        <ModificationFields
+          key={agent.id}
+          agent={agent}
+          applications={applications}
+          services={services}
+          accesses={accesses}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModificationFields({
+  agent,
+  applications,
+  services,
+  accesses,
+}: {
+  agent: AgentDto;
+  applications: ApplicationDto[];
+  services: ServiceDto[];
+  accesses: AccessDto[];
+}) {
+  const [state, action] = useActionState(createModificationRequest, null);
+  const catalog = services.length > 0;
+  const [service, setService] = useState(agent.service ?? "");
+  const matched = services.find(
+    (s) => s.nom.toLowerCase() === service.trim().toLowerCase(),
+  );
+  // en modification, on ne bloque jamais : hors catalogue, toutes les applis
+  // restent proposées ; si le service correspond, on filtre sur ses logiciels.
+  const filteredApps = matched
+    ? applications.filter((a) => matched.applicationIds.includes(a.id))
+    : applications;
+  return (
+    <>
         <form action={action} className="space-y-5">
           <Alert state={state} />
           <input type="hidden" name="agentId" value={agent.id} />
@@ -296,7 +374,19 @@ export function ModificationForm({
                 <Input name="direction" defaultValue={agent.direction ?? ""} />
               </Field>
               <Field label="Service">
-                <Input name="service" defaultValue={agent.service ?? ""} />
+                <Input
+                  name="service"
+                  list={catalog ? "svc-list" : undefined}
+                  value={service}
+                  onChange={(e) => setService(e.target.value)}
+                />
+                {catalog && (
+                  <datalist id="svc-list">
+                    {services.map((s) => (
+                      <option key={s.id} value={s.nom} />
+                    ))}
+                  </datalist>
+                )}
               </Field>
               <Field label="Fonction / poste">
                 <Input name="fonction" defaultValue={agent.fonction ?? ""} />
@@ -356,7 +446,12 @@ export function ModificationForm({
           </Card>
 
           <Card title="Accès à ajouter">
-            <AppPicker applications={applications} legend="Nouvelles applications" />
+            <AppPicker applications={filteredApps} legend="Nouvelles applications" />
+            {matched && (
+              <p className="mt-2 text-xs text-slate-400">
+                Applications proposées pour le service « {matched.nom} ».
+              </p>
+            )}
           </Card>
 
           <Card>
@@ -372,8 +467,7 @@ export function ModificationForm({
             <SubmitButton>Soumettre la demande</SubmitButton>
           </div>
         </form>
-      )}
-    </div>
+    </>
   );
 }
 

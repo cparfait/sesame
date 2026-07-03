@@ -1,5 +1,6 @@
 import { LogOut } from "lucide-react";
 import { requireUser } from "@/lib/session";
+import { prisma } from "@/lib/db";
 import { logoutAction } from "@/lib/actions/auth";
 import { Sidebar } from "@/components/nav";
 import { ROLE_LABELS } from "@/lib/constants";
@@ -8,9 +9,20 @@ export default async function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const user = await requireUser();
+  // un demandeur ne voit « Mes tâches » que s'il est responsable d'une tâche
+  const hasTasks =
+    user.role === "DEMANDEUR"
+      ? (await prisma.provisionTask.count({
+          where: {
+            statut: "A_FAIRE",
+            responsableId: user.id,
+            request: { statut: "APPROUVEE" },
+          },
+        })) > 0
+      : false;
   return (
     <div className="flex min-h-screen">
-      <Sidebar role={user.role} />
+      <Sidebar role={user.role} hasTasks={hasTasks} />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-10 flex h-14 items-center justify-end gap-4 border-b border-slate-200 bg-white/80 px-6 backdrop-blur">
           <div className="text-right">

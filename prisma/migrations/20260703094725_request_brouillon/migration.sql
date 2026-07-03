@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "RequestStatut" ADD VALUE 'BROUILLON' BEFORE 'EN_VALIDATION';
