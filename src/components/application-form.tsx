@@ -2,9 +2,20 @@
 
 import { useActionState } from "react";
 import { Trash2 } from "lucide-react";
+import type { AppFonction } from "@prisma/client";
 import { deleteApplication, saveApplication } from "@/lib/actions/applications";
-import { Alert, Card, Field, Input, Textarea, btnDanger } from "@/components/ui";
+import { APP_FONCTION_HINTS, APP_FONCTION_LABELS } from "@/lib/constants";
+import { Alert, Card, Field, Input, Select, Textarea, btnDanger } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
+
+const FONCTIONS: AppFonction[] = [
+  "MESSAGERIE",
+  "TELEPHONIE",
+  "COMPTE_AD",
+  "CONTROLE_ACCES",
+  "PARC",
+  "POSTE",
+];
 
 export type ApplicationEditDto = {
   id: string;
@@ -12,6 +23,7 @@ export type ApplicationEditDto = {
   description: string | null;
   referent: string | null;
   profils: string | null;
+  fonction: AppFonction | null;
   actif: boolean;
   accessCount: number;
 };
@@ -51,6 +63,21 @@ export function ApplicationForm({ app }: { app: ApplicationEditDto | null }) {
                 defaultValue={app?.profils ?? ""}
                 placeholder="ex. Consultation, Gestionnaire, Administrateur"
               />
+            </Field>
+            <Field label="Fonction système (relie les besoins transverses des demandes à cette application)">
+              <Select name="fonction" defaultValue={app?.fonction ?? ""}>
+                <option value="">— Aucune (application métier classique)</option>
+                {FONCTIONS.map((f) => (
+                  <option key={f} value={f}>
+                    {APP_FONCTION_LABELS[f]}
+                  </option>
+                ))}
+              </Select>
+              <span className="mt-1 block text-xs text-slate-500">
+                {app?.fonction
+                  ? APP_FONCTION_HINTS[app.fonction]
+                  : "Ex. « Messagerie » : les tâches de boîte mail seront rattachées à cette application. Une seule application par fonction (elle sera déplacée si déjà attribuée ailleurs)."}
+              </span>
             </Field>
             <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
               <input

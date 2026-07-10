@@ -99,16 +99,29 @@ model Agent {
 
 // ── Applications métiers & accès ───────────────────────────────────────────
 
+// Fonction « système » que peut remplir une application : elle relie certains
+// besoins transverses des demandes (messagerie, téléphonie/télétravail) à
+// l'application concrète qui les assure, pour générer des tâches rattachées.
+enum AppFonction {
+  MESSAGERIE // boîte mail (ex. Zimbra, Exchange)
+  TELEPHONIE // téléphonie / VPN / télétravail (ex. 3CX)
+  COMPTE_AD // compte / annuaire (ex. Active Directory, IAM)
+  CONTROLE_ACCES // badge / accès aux locaux
+  PARC // parc / matériel (ex. GLPI)
+  POSTE // antivirus / MDM / poste de travail
+}
+
 model Application {
-  id          String   @id @default(cuid())
-  nom         String   @unique
+  id          String       @id @default(cuid())
+  nom         String       @unique
   description String?
   referent    String? // référent fonctionnel ou technique
   profils     String? // profils possibles, séparés par des virgules
-  actif       Boolean  @default(true)
-  source      String   @default("local") // local | sentinelle
-  externalId  String?  @unique // id de l'Asset côté Sentinelle
-  createdAt   DateTime @default(now())
+  fonction    AppFonction? @unique // au plus une application par fonction système
+  actif       Boolean      @default(true)
+  source      String       @default("local") // local | sentinelle
+  externalId  String?      @unique // id de l'Asset côté Sentinelle
+  createdAt   DateTime     @default(now())
 
   accesses AgentAccess[]
   tasks    ProvisionTask[]
@@ -125,6 +138,7 @@ model Service {
   nom         String   @unique
   description String?
   actif       Boolean  @default(true)
+  adGroups    String? // groupes AD rattachés (un par ligne) : proposent le service selon l'appartenance du demandeur
   createdAt   DateTime @default(now())
 
   workflowCreationId     String?

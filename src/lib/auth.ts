@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import type { User } from "@prisma/client";
 import { prisma } from "./db";
-import { ldapAuthenticate } from "./ldap";
+import { ldapAuthenticate, ldapFetchAccount } from "./ldap";
 import { getLdapSettings } from "./settings";
 import { audit } from "./audit";
 
@@ -15,7 +15,16 @@ export async function ensureBootstrapAdmin(): Promise<void> {
     where: { role: "ADMIN", active: true },
   });
   if (count > 0) return;
-  const password = process.env.SESAME_ADMIN_PASSWORD ?? "sesame";
+  // En production, on exige un mot de passe explicite : créer un compte
+  // « admin / sesame » par défaut ouvrirait un accès administrateur trivial.
+  const password = process.env.SESAME_ADMIN_PASSWORD;
+  if (process.env.NODE_ENV === "production" && (!password || password.length < 8)) {
+    throw new Error(
+      "SESAME_ADMIN_PASSWORD absent ou trop court (8 caractères minimum) — " +
+        "définissez-le pour créer le compte administrateur de secours.",
+    );
+  }
+  const effectivePassword = password || "sesame";
   await prisma.user.upsert({
     where: { login: "admin" },
     update: { role: "ADMIN", active: true },
@@ -24,7 +33,7 @@ export async function ensureBootstrapAdmin(): Promise<void> {
       displayName: "Administrateur local",
       role: "ADMIN",
       isLocal: true,
-      passwordHash: await bcrypt.hash(password, 10),
+      passwordHash: await bcrypt.hash(effectivePassword, 10),
     },
   });
 }
@@ -54,8 +63,13 @@ export async function authenticate(
   }
 
   const ldap = await getLdapSettings();
-  if (!ldap?.url || !ldap?.baseDn) {
-    if (!existing) await audit("CONNEXION_ECHEC", { cible: login, details: "LDAP non configuré" });
+  if (!ldap?.url || !ldap?.baseDn || ldap.enabled === false) {
+    if (!existing) {
+      await audit("CONNEXION_ECHEC", {
+        cible: login,
+        details: ldap?.enabled === false ? "LDAP désactivé" : "LDAP non configuré",
+      });
+    }
     return null;
   }
 
@@ -63,6 +77,21 @@ export async function authenticate(
   if (!info) {
     await audit("CONNEXION_ECHEC", { cible: login });
     return null;
+  }
+
+  // Rafraîchit le miroir annuaire (AdAccount) pour cet utilisateur, sans imposer
+  // de synchronisation globale. Best-effort : n'interrompt jamais la connexion.
+  try {
+    const ad = await ldapFetchAccount(ldap, login);
+    if (ad) {
+      await prisma.adAccount.upsert({
+        where: { samAccountName: ad.samAccountName },
+        update: { ...ad, syncedAt: new Date() },
+        create: { ...ad, syncedAt: new Date() },
+      });
+    }
+  } catch {
+    // le miroir annuaire n'est pas critique pour l'authentification
   }
 
   if (existing) {

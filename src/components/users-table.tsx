@@ -1,10 +1,11 @@
 "use client";
 
 import { useActionState, useTransition } from "react";
-import { KeyRound, Power } from "lucide-react";
+import { KeyRound, Power, Trash2 } from "lucide-react";
 import type { Role } from "@prisma/client";
 import {
   createLocalUser,
+  deleteLocalUser,
   resetLocalPassword,
   setUserRole,
   toggleUserActive,
@@ -37,6 +38,19 @@ export function UsersTable({ users, meId }: { users: UserDto[]; meId: string }) 
     startTransition(async () => {
       const result = await resetLocalPassword(null, fd);
       window.alert(result?.success ?? result?.error ?? "");
+    });
+  };
+
+  const remove = (u: UserDto) => {
+    if (
+      !window.confirm(
+        `Supprimer définitivement le compte local « ${u.login} » ? Cette action est irréversible.`,
+      )
+    )
+      return;
+    startTransition(async () => {
+      const result = await deleteLocalUser(u.id);
+      if (result?.error) window.alert(result.error);
     });
   };
 
@@ -115,6 +129,15 @@ export function UsersTable({ users, meId }: { users: UserDto[]; meId: string }) 
                       }`}
                     >
                       <Power className="h-4 w-4" />
+                    </button>
+                  )}
+                  {u.isLocal && u.id !== meId && (
+                    <button
+                      onClick={() => remove(u)}
+                      title="Supprimer le compte local"
+                      className="rounded-md border border-slate-200 p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   )}
                 </div>

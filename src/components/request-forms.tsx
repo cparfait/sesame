@@ -1,11 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   createCreationRequest,
   createDepartRequest,
   createModificationRequest,
+  resolveAgentFromAd,
+  searchAdAgents,
+  type AdAgentOption,
 } from "@/lib/actions/requests";
 import { CIVILITES, STATUTS_EMPLOI, TELETRAVAIL_OPTIONS } from "@/lib/constants";
 import { Alert, Card, Field, Input, Select, Textarea } from "@/components/ui";
@@ -95,34 +98,114 @@ function AppPicker({
   );
 }
 
-function AgentSelect({
-  agents,
+/** Sélection de l'agent concerné via une recherche dans l'annuaire AD. */
+function AgentAdSelect({
   type,
-  selectedId,
+  selected,
 }: {
-  agents: AgentDto[];
   type: "MODIFICATION" | "DEPART";
-  selectedId?: string;
+  selected: { nom: string; prenom: string } | null;
 }) {
   const router = useRouter();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<AdAgentOption[]>([]);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const q = query.trim();
+    const t = setTimeout(() => {
+      if (q.length < 2) {
+        setResults([]);
+        setOpen(false);
+        return;
+      }
+      startTransition(async () => {
+        setResults(await searchAdAgents(q));
+        setOpen(true);
+      });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  const pick = (r: AdAgentOption) => {
+    setOpen(false);
+    setQuery("");
+    setError(null);
+    startTransition(async () => {
+      const res = await resolveAgentFromAd(r.samAccountName);
+      if (res.error || !res.id) {
+        setError(res.error ?? "Impossible de rattacher cet agent.");
+        return;
+      }
+      router.push(`/demandes/nouvelle?type=${type}&agentId=${res.id}`);
+    });
+  };
+
+  if (selected) {
+    return (
+      <Field label="Agent concerné" required>
+        <div className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+          <span className="flex-1 font-medium text-slate-700">
+            {selected.nom.toUpperCase()} {selected.prenom}
+          </span>
+          <button
+            type="button"
+            onClick={() => router.push(`/demandes/nouvelle?type=${type}`)}
+            className="text-xs font-medium text-indigo-600 hover:underline"
+          >
+            Changer
+          </button>
+        </div>
+      </Field>
+    );
+  }
+
   return (
     <Field label="Agent concerné" required>
-      <Select
-        value={selectedId ?? ""}
-        onChange={(e) =>
-          router.push(`/demandes/nouvelle?type=${type}&agentId=${e.target.value}`)
-        }
-      >
-        <option value="" disabled>
-          Choisir un agent…
-        </option>
-        {agents.map((a) => (
-          <option key={a.id} value={a.id}>
-            {a.nom.toUpperCase()} {a.prenom}
-            {a.service ? ` — ${a.service}` : ""}
-          </option>
-        ))}
-      </Select>
+      <div ref={boxRef} className="relative">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          placeholder="Rechercher dans l'annuaire AD…"
+        />
+        {open && (
+          <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+            {pending && <li className="px-3 py-2 text-sm text-slate-400">Recherche…</li>}
+            {!pending && results.length === 0 && (
+              <li className="px-3 py-2 text-sm text-slate-400">Aucun compte trouvé.</li>
+            )}
+            {results.map((r) => (
+              <li key={r.samAccountName}>
+                <button
+                  type="button"
+                  onClick={() => pick(r)}
+                  className="flex w-full flex-col items-start px-3 py-2 text-left text-sm hover:bg-indigo-50"
+                >
+                  <span className="font-medium text-slate-700">{r.displayName}</span>
+                  <span className="text-xs text-slate-400">
+                    {r.samAccountName}
+                    {r.ou ? ` · ${r.ou}` : ""}
+                    {r.email ? ` · ${r.email}` : ""}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </Field>
   );
 }
@@ -133,13 +216,15 @@ export function CreationForm({
   applications,
   services,
   equipements,
+  defaultService,
 }: {
   applications: ApplicationDto[];
   services: ServiceDto[];
   equipements: EquipementDto[];
+  defaultService?: string; // service pré-sélectionné (celui du demandeur, modifiable)
 }) {
   const [state, action] = useActionState(createCreationRequest, null);
-  const [service, setService] = useState("");
+  const [service, setService] = useState(defaultService ?? "");
   const catalog = services.length > 0;
   const selected = services.find((s) => s.nom === service);
   const filteredApps = catalog
@@ -302,13 +387,11 @@ export function CreationForm({
 // ── Modification ───────────────────────────────────────────────────────────
 
 export function ModificationForm({
-  agents,
   applications,
   services,
   agent,
   accesses,
 }: {
-  agents: AgentDto[];
   applications: ApplicationDto[];
   services: ServiceDto[];
   agent: AgentDto | null;
@@ -317,7 +400,10 @@ export function ModificationForm({
   return (
     <div className="space-y-5">
       <Card>
-        <AgentSelect agents={agents} type="MODIFICATION" selectedId={agent?.id} />
+        <AgentAdSelect
+          type="MODIFICATION"
+          selected={agent ? { nom: agent.nom, prenom: agent.prenom } : null}
+        />
       </Card>
 
       {agent && (
@@ -485,11 +571,9 @@ const MOTIFS_DEPART = [
 ];
 
 export function DepartForm({
-  agents,
   agent,
   accesses,
 }: {
-  agents: AgentDto[];
   agent: AgentDto | null;
   accesses: AccessDto[];
 }) {
@@ -497,7 +581,10 @@ export function DepartForm({
   return (
     <div className="space-y-5">
       <Card>
-        <AgentSelect agents={agents} type="DEPART" selectedId={agent?.id} />
+        <AgentAdSelect
+          type="DEPART"
+          selected={agent ? { nom: agent.nom, prenom: agent.prenom } : null}
+        />
       </Card>
 
       {agent && (

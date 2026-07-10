@@ -25,6 +25,7 @@ export default async function ParametresServicesPage() {
     description: s.description,
     actif: s.actif,
     applicationIds: s.applications.map((a) => a.applicationId),
+    adGroups: s.adGroups,
     workflowCreationId: s.workflowCreationId,
     workflowModificationId: s.workflowModificationId,
     workflowDepartId: s.workflowDepartId,

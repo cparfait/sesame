@@ -4,14 +4,61 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "../db";
 import { requireUser } from "../session";
 import { audit } from "../audit";
+import { findDirectoryAccount, searchDirectory } from "../directory";
 import type { FormState } from "./auth";
+
+/** Un responsable choisi dans l'annuaire AD. */
+export type ResponsableAd = {
+  samAccountName: string;
+  displayName: string;
+  email?: string | null;
+};
 
 export type EquipementInput = {
   id?: string;
   nom: string;
-  responsableId?: string | null;
+  responsable?: ResponsableAd | null;
   actif: boolean;
 };
+
+/**
+ * Recherche des comptes dans l'annuaire AD synchronisé pour désigner le
+ * responsable d'un équipement. Renvoie au plus 10 comptes actifs.
+ */
+export async function searchAdAccounts(query: string): Promise<ResponsableAd[]> {
+  await requireUser("ADMIN");
+  const accounts = await searchDirectory(query);
+  return accounts
+    .filter((a) => a.enabled)
+    .map((a) => ({
+      samAccountName: a.samAccountName,
+      displayName: a.displayName,
+      email: a.email,
+    }));
+}
+
+/**
+ * Rattache un responsable AD à un compte utilisateur Sésame (créé à la volée
+ * s'il n'existe pas), afin qu'il puisse recevoir les notifications de tâches
+ * (magic link). Le compte n'est accepté que s'il existe et est actif dans
+ * l'annuaire AD synchronisé (on ne fait pas confiance au nom/email envoyés par
+ * le client). Renvoie l'id de l'utilisateur, ou null si le compte est invalide.
+ */
+async function resolveResponsable(resp: ResponsableAd): Promise<string | null> {
+  const login = resp.samAccountName.trim().toLowerCase();
+  if (!login) return null;
+  // revalidation serveur : le compte doit exister et être actif dans l'AD
+  const account = await findDirectoryAccount(login);
+  if (!account || !account.enabled) return null;
+  // on utilise les valeurs canoniques de l'annuaire, pas celles du client
+  const displayName = account.displayName ?? account.samAccountName;
+  const user = await prisma.user.upsert({
+    where: { login },
+    update: { displayName, email: account.email ?? undefined },
+    create: { login, displayName, email: account.email ?? undefined, isLocal: false },
+  });
+  return user.id;
+}
 
 export async function saveEquipement(
   input: EquipementInput,
@@ -28,10 +75,15 @@ export async function saveEquipement(
   });
   if (duplicate) return { error: "Un équipement porte déjà ce nom." };
 
-  let responsableId = input.responsableId || null;
-  if (responsableId) {
-    const resp = await prisma.user.findUnique({ where: { id: responsableId } });
-    if (!resp?.active) responsableId = null;
+  let responsableId: string | null = null;
+  if (input.responsable) {
+    responsableId = await resolveResponsable(input.responsable);
+    if (!responsableId) {
+      return {
+        error:
+          "Responsable introuvable ou désactivé dans l'annuaire AD. Relancez une synchronisation puis resélectionnez-le.",
+      };
+    }
   }
 
   const data = { nom, responsableId, actif: input.actif };

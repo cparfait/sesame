@@ -12,6 +12,7 @@ export type ServiceInput = {
   description?: string;
   actif: boolean;
   applicationIds: string[];
+  adGroups?: string[]; // groupes AD rattachés (DN ou nom)
   workflowCreationId?: string | null;
   workflowModificationId?: string | null;
   workflowDepartId?: string | null;
@@ -46,10 +47,14 @@ export async function saveService(
   });
   if (duplicate) return { error: "Un service porte déjà ce nom." };
 
+  // groupes AD rattachés : nettoyés, dédoublonnés, stockés un par ligne
+  const adGroups = [...new Set((input.adGroups ?? []).map((g) => g.trim()).filter(Boolean))];
+
   const data = {
     nom,
     description: input.description?.trim() || null,
     actif: input.actif,
+    adGroups: adGroups.length > 0 ? adGroups.join("\n") : null,
     workflowCreationId: await validWorkflowId(input.workflowCreationId, "CREATION"),
     workflowModificationId: await validWorkflowId(
       input.workflowModificationId,

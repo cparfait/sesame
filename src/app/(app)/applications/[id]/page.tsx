@@ -28,6 +28,7 @@ export default async function ApplicationEditPage({
           description: app.description,
           referent: app.referent,
           profils: app.profils,
+          fonction: app.fonction,
           actif: app.actif,
           accessCount: app._count.accesses,
         }}

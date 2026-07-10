@@ -1,4 +1,5 @@
 import type {
+  AppFonction,
   Request,
   RequestStep,
   RequestType,
@@ -654,26 +655,71 @@ async function applyEffects(request: Request): Promise<string | undefined> {
   return undefined;
 }
 
+/** Application active qui porte chaque fonction système (indexée par fonction). */
+type SystemApps = Partial<Record<AppFonction, { id: string; nom: string }>>;
+
+async function loadSystemApps(): Promise<SystemApps> {
+  const apps = await prisma.application.findMany({
+    where: { fonction: { not: null }, actif: true },
+    select: { id: true, nom: true, fonction: true },
+  });
+  const map: SystemApps = {};
+  for (const a of apps) {
+    if (a.fonction) map[a.fonction] = { id: a.id, nom: a.nom };
+  }
+  return map;
+}
+
+/** Suffixe « — Nom de l'appli » si une application porte la fonction. */
+const withApp = (app: { nom: string } | undefined) => (app ? ` — ${app.nom}` : "");
+
+type TaskDraft = {
+  label: string;
+  categorie: string;
+  applicationId?: string;
+  responsableId?: string;
+};
+
 /** Génère la checklist de provisionnement selon le type de demande. */
 async function generateTasks(request: Request): Promise<void> {
-  const tasks: {
-    label: string;
-    categorie: string;
-    applicationId?: string;
-    responsableId?: string;
-  }[] = [];
+  const tasks: TaskDraft[] = [];
+  const sys = await loadSystemApps();
 
   if (request.type === "CREATION") {
     const p = request.payload as unknown as CreationPayload;
     tasks.push(
-      { label: `Créer le compte AD de ${p.prenom} ${p.nom}`, categorie: "AD" },
-      { label: "Créer la boîte mail", categorie: "Messagerie" },
+      {
+        label: `Créer le compte AD de ${p.prenom} ${p.nom}${withApp(sys.COMPTE_AD)}`,
+        categorie: "AD",
+        applicationId: sys.COMPTE_AD?.id,
+      },
+      {
+        label: `Créer la boîte mail${withApp(sys.MESSAGERIE)}`,
+        categorie: "Messagerie",
+        applicationId: sys.MESSAGERIE?.id,
+      },
       { label: "Faire signer la charte informatique", categorie: "Autre" },
     );
     if (p.teletravail) {
       tasks.push({
-        label: `Ouvrir l'accès télétravail (VPN, MFA) — ${p.teletravail}`,
-        categorie: "AD",
+        label: `Ouvrir l'accès télétravail (VPN, MFA)${withApp(sys.TELEPHONIE)} — ${p.teletravail}`,
+        categorie: sys.TELEPHONIE ? "Téléphonie" : "AD",
+        applicationId: sys.TELEPHONIE?.id,
+      });
+    }
+    // besoins « opt-in » : une tâche uniquement si une appli porte la fonction
+    if (sys.CONTROLE_ACCES) {
+      tasks.push({
+        label: `Créer le badge d'accès — ${sys.CONTROLE_ACCES.nom}`,
+        categorie: "Contrôle d'accès",
+        applicationId: sys.CONTROLE_ACCES.id,
+      });
+    }
+    if (sys.POSTE) {
+      tasks.push({
+        label: `Inscrire le poste (antivirus, MDM) — ${sys.POSTE.nom}`,
+        categorie: "Poste",
+        applicationId: sys.POSTE.id,
       });
     }
     for (const a of p.applications ?? []) {
@@ -699,17 +745,31 @@ async function generateTasks(request: Request): Promise<void> {
         responsableId: resp?.id,
       });
     }
+    // enregistrement du matériel au parc (si une appli de parc est configurée)
+    if (sys.PARC && equipNoms.length > 0) {
+      tasks.push({
+        label: `Enregistrer le matériel au parc — ${sys.PARC.nom}`,
+        categorie: "Parc",
+        applicationId: sys.PARC.id,
+      });
+    }
   }
 
   if (request.type === "MODIFICATION") {
     const p = request.payload as unknown as ModificationPayload;
-    tasks.push({ label: "Mettre à jour la fiche AD (service, groupes, intitulé)", categorie: "AD" });
+    tasks.push({
+      label: `Mettre à jour la fiche AD (service, groupes, intitulé)${withApp(sys.COMPTE_AD)}`,
+      categorie: "AD",
+      applicationId: sys.COMPTE_AD?.id,
+    });
     if (p.champs?.teletravail !== undefined) {
+      const suffix = withApp(sys.TELEPHONIE);
       tasks.push({
         label: p.champs.teletravail
-          ? `Mettre à jour l'accès télétravail (VPN, MFA) — ${p.champs.teletravail}`
-          : "Fermer l'accès télétravail (VPN)",
-        categorie: "AD",
+          ? `Mettre à jour l'accès télétravail (VPN, MFA)${suffix} — ${p.champs.teletravail}`
+          : `Fermer l'accès télétravail (VPN)${suffix}`,
+        categorie: sys.TELEPHONIE ? "Téléphonie" : "AD",
+        applicationId: sys.TELEPHONIE?.id,
       });
     }
     for (const a of p.addApplications ?? []) {
@@ -727,11 +787,44 @@ async function generateTasks(request: Request): Promise<void> {
   if (request.type === "DEPART") {
     const p = request.payload as unknown as DepartPayload;
     tasks.push(
-      { label: "Désactiver le compte AD", categorie: "AD" },
-      { label: "Couper ou rediriger la boîte mail", categorie: "Messagerie" },
-      { label: "Fermer les accès distants (VPN, MFA)", categorie: "AD" },
+      {
+        label: `Désactiver le compte AD${withApp(sys.COMPTE_AD)}`,
+        categorie: "AD",
+        applicationId: sys.COMPTE_AD?.id,
+      },
+      {
+        label: `Couper ou rediriger la boîte mail${withApp(sys.MESSAGERIE)}`,
+        categorie: "Messagerie",
+        applicationId: sys.MESSAGERIE?.id,
+      },
+      {
+        label: `Fermer les accès distants (VPN, MFA)${withApp(sys.TELEPHONIE)}`,
+        categorie: sys.TELEPHONIE ? "Téléphonie" : "AD",
+        applicationId: sys.TELEPHONIE?.id,
+      },
       { label: "Récupérer le matériel (poste, téléphone, badge, clés)", categorie: "Matériel" },
     );
+    if (sys.CONTROLE_ACCES) {
+      tasks.push({
+        label: `Désactiver le badge d'accès — ${sys.CONTROLE_ACCES.nom}`,
+        categorie: "Contrôle d'accès",
+        applicationId: sys.CONTROLE_ACCES.id,
+      });
+    }
+    if (sys.POSTE) {
+      tasks.push({
+        label: `Retirer le poste (antivirus, MDM) — ${sys.POSTE.nom}`,
+        categorie: "Poste",
+        applicationId: sys.POSTE.id,
+      });
+    }
+    if (sys.PARC) {
+      tasks.push({
+        label: `Sortir le matériel du parc — ${sys.PARC.nom}`,
+        categorie: "Parc",
+        applicationId: sys.PARC.id,
+      });
+    }
     for (const a of p.accesses ?? []) {
       tasks.push({ label: `Retirer l'accès : ${a.label}`, categorie: "Application" });
     }
@@ -758,14 +851,28 @@ export async function checkCompletion(requestId: string): Promise<void> {
   if (!allDone) return;
 
   if (request.type === "DEPART" && request.agentId) {
-    await prisma.agent.update({
+    const agent = await prisma.agent.update({
       where: { id: request.agentId },
       data: { statut: "PARTI" },
+      select: { adLogin: true },
     });
     await prisma.agentAccess.updateMany({
       where: { agentId: request.agentId, statut: "A_SUPPRIMER" },
       data: { statut: "SUPPRIME", dateSuppression: new Date() },
     });
+    // Désactive le compte Sésame lié à l'agent (créé à la volée comme
+    // responsable, ou via une première connexion LDAP) : coupe l'accès et les
+    // notifications. On épargne les comptes locaux (ex. admin de secours).
+    if (agent.adLogin) {
+      const login = agent.adLogin.trim().toLowerCase();
+      const deactivated = await prisma.user.updateMany({
+        where: { login, isLocal: false, active: true },
+        data: { active: false },
+      });
+      if (deactivated.count > 0) {
+        await audit("UTILISATEUR_DESACTIVE", { cible: login });
+      }
+    }
   }
   if (request.type === "MODIFICATION" && request.agentId) {
     const p = request.payload as unknown as ModificationPayload;

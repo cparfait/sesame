@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "../db";
 import { requireUser } from "../session";
 import { audit } from "../audit";
+import { findDirectoryAccount, searchDirectory } from "../directory";
 import {
   checkCompletion,
   createRequest,
@@ -13,6 +14,7 @@ import {
   sendBack,
   updateRequestCircuit,
 } from "../workflow";
+import { REQUEST_TYPE_LABELS } from "../constants";
 import type {
   AppDemandee,
   CircuitStepInput,
@@ -25,6 +27,87 @@ import type { TaskStatut } from "@prisma/client";
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
+}
+
+export type AdAgentOption = {
+  samAccountName: string;
+  displayName: string;
+  email?: string | null;
+  ou?: string | null;
+};
+
+/**
+ * Recherche de comptes dans l'annuaire AD synchronisé pour désigner l'agent
+ * concerné d'une demande de modification / départ.
+ */
+export async function searchAdAgents(query: string): Promise<AdAgentOption[]> {
+  await requireUser("DEMANDEUR", "VALIDATEUR", "TECHNICIEN");
+  const accounts = await searchDirectory(query);
+  return accounts.map((a) => ({
+    samAccountName: a.samAccountName,
+    displayName: a.displayName,
+    email: a.email,
+    ou: a.ou,
+  }));
+}
+
+/**
+ * Découpe un `displayName` AD en nom / prénom (best-effort, ajustable ensuite
+ * dans la fiche) : gère « NOM, Prénom », le nom de famille tout en majuscules,
+ * et par défaut « Prénom NOM » (dernier mot = nom).
+ */
+function splitDisplayName(dn: string): { nom: string; prenom: string } {
+  const clean = dn.trim().replace(/\s+/g, " ");
+  if (clean.includes(",")) {
+    const [nom, prenom] = clean.split(",").map((s) => s.trim());
+    return { nom: nom || clean, prenom: prenom || "" };
+  }
+  const parts = clean.split(" ");
+  if (parts.length === 1) return { nom: parts[0], prenom: "" };
+  const upper = parts.filter((p) => p.length > 1 && p === p.toUpperCase());
+  if (upper.length > 0 && upper.length < parts.length) {
+    return {
+      nom: upper.join(" "),
+      prenom: parts.filter((p) => !upper.includes(p)).join(" "),
+    };
+  }
+  return { nom: parts[parts.length - 1], prenom: parts.slice(0, -1).join(" ") };
+}
+
+/**
+ * Résout la fiche agent locale correspondant à un compte AD (rapprochement par
+ * `adLogin`). Crée une fiche minimale depuis l'annuaire si aucune n'existe, afin
+ * de lancer une demande de modification / départ. Renvoie l'id de la fiche.
+ */
+export async function resolveAgentFromAd(
+  samAccountName: string,
+): Promise<{ id?: string; error?: string }> {
+  const user = await requireUser("DEMANDEUR", "VALIDATEUR", "TECHNICIEN");
+  const login = samAccountName.trim().toLowerCase();
+  if (!login) return { error: "Compte AD invalide." };
+
+  const account = await findDirectoryAccount(login);
+  if (!account) return { error: "Compte introuvable dans l'annuaire AD." };
+
+  const existing = await prisma.agent.findFirst({
+    where: { adLogin: { equals: login, mode: "insensitive" } },
+    select: { id: true },
+  });
+  if (existing) return { id: existing.id };
+
+  const { nom, prenom } = splitDisplayName(account.displayName ?? account.samAccountName);
+  const agent = await prisma.agent.create({
+    data: {
+      nom,
+      prenom,
+      statutEmploi: "Autre",
+      email: account.email ?? null,
+      adLogin: account.samAccountName,
+    },
+    select: { id: true },
+  });
+  await audit("AGENT_CREE_DEPUIS_AD", { userId: user.id, cible: account.samAccountName });
+  return { id: agent.id };
 }
 
 /** Applications cochées dans le formulaire : champs app_<id> + profil_<id>. */
@@ -287,4 +370,24 @@ export async function cancelRequest(requestId: string): Promise<void> {
   });
   revalidatePath(`/demandes/${requestId}`);
   revalidatePath("/demandes");
+}
+
+/**
+ * Supprime définitivement une demande (réservé aux administrateurs) : efface
+ * aussi ses étapes, validations et tâches (cascade). Contrairement à
+ * l'annulation, aucune trace de la demande n'est conservée — seul le journal
+ * garde l'événement de suppression.
+ */
+export async function deleteRequest(requestId: string): Promise<FormState> {
+  const user = await requireUser("ADMIN");
+  const request = await prisma.request.findUnique({ where: { id: requestId } });
+  if (!request) return { error: "Demande introuvable." };
+  await prisma.request.delete({ where: { id: requestId } });
+  await audit("DEMANDE_SUPPRIMEE", {
+    userId: user.id,
+    cible: `Demande n° ${request.numero}`,
+    details: REQUEST_TYPE_LABELS[request.type],
+  });
+  revalidatePath("/demandes");
+  return { success: `Demande n° ${request.numero} supprimée.` };
 }

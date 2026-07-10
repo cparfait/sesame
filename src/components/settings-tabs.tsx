@@ -5,13 +5,13 @@ import { usePathname } from "next/navigation";
 
 const tabs = [
   { href: "/parametres", label: "Général" },
-  { href: "/parametres/annuaire", label: "Annuaire AD (LDAPS)" },
-  { href: "/parametres/messagerie", label: "Messagerie (SMTP)" },
-  { href: "/parametres/sentinelle", label: "Sentinelle" },
   { href: "/parametres/services", label: "Services & applications" },
   { href: "/parametres/equipements", label: "Équipements" },
   { href: "/parametres/workflows", label: "Circuits de validation" },
   { href: "/parametres/utilisateurs", label: "Utilisateurs & rôles" },
+  { href: "/parametres/annuaire", label: "Annuaire AD (LDAPS)" },
+  { href: "/parametres/messagerie", label: "Messagerie (SMTP)" },
+  { href: "/parametres/connecteurs", label: "Connecteurs" },
 ];
 
 export function SettingsTabs() {

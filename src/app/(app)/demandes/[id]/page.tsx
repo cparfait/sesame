@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/session";
 import { canDecide } from "@/lib/workflow";
 import { managedAgentIds } from "@/lib/responsibility";
 import { cancelRequest } from "@/lib/actions/requests";
+import { DeleteRequestButton } from "@/components/delete-request-button";
 import { Badge, Card, PageHeader, btnDanger } from "@/components/ui";
 import { DecideBox } from "@/components/decide-box";
 import { CircuitTree, type TreeStep } from "@/components/circuit-tree";
@@ -260,6 +261,9 @@ export default async function DemandeDetailPage({
               <Ban className="h-4 w-4" /> Annuler
             </button>
           </form>
+        )}
+        {user.role === "ADMIN" && (
+          <DeleteRequestButton requestId={request.id} numero={request.numero} />
         )}
       </PageHeader>
 

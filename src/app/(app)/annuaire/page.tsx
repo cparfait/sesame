@@ -4,7 +4,14 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { Badge, EmptyState, PageHeader } from "@/components/ui";
 import { SyncButton } from "@/components/sync-button";
-import { fmtDate, fmtDateTime } from "@/lib/constants";
+import { getLdapSettings } from "@/lib/settings";
+import {
+  DEFAULT_INACTIVE_DAYS,
+  fmtAge,
+  fmtDate,
+  fmtDateTime,
+  isInactiveSince,
+} from "@/lib/constants";
 
 export default async function AnnuairePage({
   searchParams,
@@ -16,7 +23,7 @@ export default async function AnnuairePage({
   const q = params.q?.trim() ?? "";
   const filtre = params.filtre ?? "";
 
-  const [accounts, agents, lastSync] = await Promise.all([
+  const [accounts, agents, lastSync, allNames, ldap] = await Promise.all([
     prisma.adAccount.findMany({
       where: q
         ? {
@@ -36,17 +43,41 @@ export default async function AnnuairePage({
       select: { id: true, nom: true, prenom: true, adLogin: true, statut: true },
     }),
     prisma.adAccount.findFirst({ orderBy: { syncedAt: "desc" } }),
+    // table DN → nom affiché pour résoudre le responsable hiérarchique (attribut
+    // AD « manager », stocké sous forme de DN), indépendamment de la recherche.
+    prisma.adAccount.findMany({ select: { dn: true, displayName: true } }),
+    getLdapSettings(),
   ]);
+
+  const INACTIF_JOURS = ldap?.inactiveDays ?? DEFAULT_INACTIVE_DAYS;
 
   const agentByLogin = new Map(
     agents.map((a) => [a.adLogin!.toLowerCase(), a]),
   );
+
+  // « CN=Jean Dupont,OU=… » → nom lisible du responsable
+  const nameByDn = new Map(
+    allNames.map((a) => [a.dn.toLowerCase(), a.displayName]),
+  );
+  const managerName = (dn: string | null): string | null => {
+    if (!dn) return null;
+    return (
+      nameByDn.get(dn.toLowerCase()) ??
+      (dn.split(",")[0]?.replace(/^CN=/i, "") || null)
+    );
+  };
 
   // alertes : agents partis dont le compte AD est toujours actif
   const alertes = accounts.filter((acc) => {
     const agent = agentByLogin.get(acc.samAccountName.toLowerCase());
     return acc.enabled && agent?.statut === "PARTI";
   });
+
+  // compte actif mais sans connexion depuis > INACTIF_JOURS (ou jamais) : piste
+  // de départ non traité. « jamais » (lastLogon null) compte comme inactif.
+  const inactifs = accounts.filter(
+    (acc) => acc.enabled && isInactiveSince(acc.lastLogon, INACTIF_JOURS),
+  );
 
   const filtered = accounts.filter((acc) => {
     const agent = agentByLogin.get(acc.samAccountName.toLowerCase());
@@ -59,6 +90,8 @@ export default async function AnnuairePage({
         return !agent;
       case "alertes":
         return acc.enabled && agent?.statut === "PARTI";
+      case "inactifs":
+        return acc.enabled && isInactiveSince(acc.lastLogon, INACTIF_JOURS);
       default:
         return true;
     }
@@ -71,6 +104,7 @@ export default async function AnnuairePage({
     { label: "Actifs", value: "actifs" },
     { label: "Désactivés", value: "desactives" },
     { label: "Sans agent lié", value: "orphelins" },
+    { label: `Inactifs > ${INACTIF_JOURS} j (${inactifs.length})`, value: "inactifs" },
     { label: `⚠ Alertes départ (${alertes.length})`, value: "alertes" },
   ];
 
@@ -140,7 +174,13 @@ export default async function AnnuairePage({
                 <th className="px-4 py-3 font-medium">Compte</th>
                 <th className="px-4 py-3 font-medium">Nom affiché</th>
                 <th className="px-4 py-3 font-medium">OU</th>
-                <th className="px-4 py-3 font-medium">Dernière connexion</th>
+                <th className="px-4 py-3 font-medium">Responsable</th>
+                <th
+                  className="px-4 py-3 font-medium"
+                  title="Source : attribut AD lastLogonTimestamp. Valeur approximative — elle peut retarder de ~14 jours sur la connexion réelle (limite d'Active Directory). Survolez une valeur pour la date exacte."
+                >
+                  Dernière connexion <span className="text-slate-300">ⓘ</span>
+                </th>
                 <th className="px-4 py-3 font-medium">Agent lié</th>
                 <th className="px-4 py-3 text-right font-medium">État AD</th>
               </tr>
@@ -161,7 +201,18 @@ export default async function AnnuairePage({
                     </td>
                     <td className="px-4 py-3 font-medium">{acc.displayName ?? "—"}</td>
                     <td className="px-4 py-3 text-slate-500">{acc.ou || "—"}</td>
-                    <td className="px-4 py-3 text-slate-500">{fmtDate(acc.lastLogon)}</td>
+                    <td className="px-4 py-3 text-slate-500">{managerName(acc.manager) ?? "—"}</td>
+                    <td className="px-4 py-3 text-slate-500">
+                      <span
+                        title={
+                          acc.lastLogon
+                            ? `Date AD (±14 j) : ${fmtDate(acc.lastLogon)}`
+                            : "Aucune connexion enregistrée"
+                        }
+                      >
+                        {fmtAge(acc.lastLogon)}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">
                       {agent ? (
                         <Link

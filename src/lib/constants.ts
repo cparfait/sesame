@@ -1,6 +1,7 @@
 import type {
   AccessStatut,
   AgentStatut,
+  AppFonction,
   RequestStatut,
   RequestType,
   Role,
@@ -62,6 +63,35 @@ export const AGENT_STATUT_LABELS: Record<AgentStatut, string> = {
   PARTI: "Parti",
 };
 
+/**
+ * Fonctions « système » d'application : besoins transverses des demandes reliés
+ * à l'application concrète qui les assure. `description` explicite l'effet sur
+ * la checklist de provisionnement.
+ */
+export const APP_FONCTION_LABELS: Record<AppFonction, string> = {
+  MESSAGERIE: "Messagerie (boîte mail)",
+  TELEPHONIE: "Téléphonie / VPN (télétravail)",
+  COMPTE_AD: "Compte AD / annuaire",
+  CONTROLE_ACCES: "Badge / contrôle d'accès",
+  PARC: "Parc / matériel (GLPI…)",
+  POSTE: "Antivirus / MDM / poste",
+};
+
+export const APP_FONCTION_HINTS: Record<AppFonction, string> = {
+  MESSAGERIE:
+    "Les tâches « créer / couper la boîte mail » seront rattachées à cette application.",
+  TELEPHONIE:
+    "Les tâches d'accès télétravail (VPN, MFA) seront rattachées à cette application.",
+  COMPTE_AD:
+    "Les tâches de compte AD (création, mise à jour, désactivation) seront rattachées à cette application.",
+  CONTROLE_ACCES:
+    "Une tâche « badge / accès aux locaux » sera ajoutée (création) et « désactiver le badge » (départ), rattachée à cette application.",
+  PARC:
+    "Une tâche « enregistrer / sortir le matériel du parc » sera ajoutée, rattachée à cette application.",
+  POSTE:
+    "Une tâche « inscrire / retirer le poste (antivirus, MDM) » sera ajoutée, rattachée à cette application.",
+};
+
 export const CIVILITES = ["Madame", "Monsieur"];
 
 export const STATUTS_EMPLOI = [
@@ -85,6 +115,9 @@ export const TELETRAVAIL_OPTIONS = [
   "Ponctuel",
 ];
 
+// Seuil d'inactivité par défaut de l'annuaire (jours) quand non configuré.
+export const DEFAULT_INACTIVE_DAYS = 90;
+
 export function fmtDate(d: Date | string | null | undefined): string {
   if (!d) return "—";
   return new Date(d).toLocaleDateString("fr-FR");
@@ -96,6 +129,38 @@ export function fmtDateTime(d: Date | string | null | undefined): string {
     dateStyle: "short",
     timeStyle: "short",
   });
+}
+
+/**
+ * Ancienneté approximative d'une date passée : « il y a ~3 mois ». Le « ~ »
+ * signale l'imprécision — pensé pour lastLogonTimestamp AD (flou de ~14 jours).
+ * Null = « jamais » (aucune connexion enregistrée).
+ */
+export function fmtAge(d: Date | string | null | undefined): string {
+  if (!d) return "jamais";
+  const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
+  if (days <= 0) return "aujourd'hui";
+  if (days === 1) return "hier";
+  if (days < 30) return `il y a ~${days} j`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `il y a ~${months} mois`;
+  const years = Math.floor(days / 365);
+  const rem = Math.floor((days - years * 365) / 30);
+  const y = `${years} an${years > 1 ? "s" : ""}`;
+  return rem > 0 ? `il y a ~${y} ${rem} mois` : `il y a ~${y}`;
+}
+
+/**
+ * Un compte est « inactif » si sa dernière connexion remonte à plus de `days`
+ * jours — ou s'il ne s'est jamais connecté (`null`). Isolé ici (plutôt qu'inline
+ * dans un composant) car la lecture de l'horloge est impure au sens du rendu.
+ */
+export function isInactiveSince(
+  d: Date | string | null | undefined,
+  days: number,
+): boolean {
+  if (!d) return true;
+  return (Date.now() - new Date(d).getTime()) / 86_400_000 > days;
 }
 
 /** Libellé de l'objet d'une demande à partir de son payload. */

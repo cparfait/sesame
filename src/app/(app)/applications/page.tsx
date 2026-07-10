@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { Badge, EmptyState, PageHeader, btnPrimary } from "@/components/ui";
+import { APP_FONCTION_LABELS } from "@/lib/constants";
 
 export default async function ApplicationsPage() {
   const user = await requireUser("VALIDATEUR", "TECHNICIEN", "LECTEUR");
@@ -44,7 +45,12 @@ export default async function ApplicationsPage() {
             >
               <div className="flex items-start justify-between gap-2">
                 <p className="font-semibold">{app.nom}</p>
-                <span className="flex gap-1.5">
+                <span className="flex flex-wrap justify-end gap-1.5">
+                  {app.fonction && (
+                    <Badge color="bg-violet-50 text-violet-700 ring-violet-600/20">
+                      {APP_FONCTION_LABELS[app.fonction]}
+                    </Badge>
+                  )}
                   {app.source === "sentinelle" && (
                     <Badge color="bg-cyan-50 text-cyan-700 ring-cyan-600/20">
                       Sentinelle
